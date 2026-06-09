@@ -756,19 +756,22 @@ function clearFuncsCache() { _funcs = null; }
 
 function getSalarioVigente(f) {
   const hist = f.salario_historico || [];
-  if (!hist.length) return f.salario || 0;
+  if (!hist.length) return Number(f.salario)||0;
   const validas = hist.filter(h =>
     h.year < currentYear || (h.year === currentYear && h.month <= currentMonth)
   );
   if (!validas.length) return 0;
   validas.sort((a,b) => (b.year*12+b.month) - (a.year*12+a.month));
-  return validas[0].valor;
+  return Number(validas[0].valor)||0;
 }
+
+// Converte boolean do DB → 'sim'/'nao' para uso na UI
+function temComissaoStr(f) { return f.tem_comissao === true ? 'sim' : 'nao'; }
 
 async function funcDoMes() {
   const all = await getFuncs();
   return all.filter(f => {
-    if (f.ativo === false) return false;
+    if (f.ativo === false || f.ativo === null) return false;
     const sy = f.start_year || 0;
     const sm = f.start_month != null ? f.start_month : 0;
     return currentYear > sy || (currentYear === sy && currentMonth >= sm);
@@ -873,9 +876,9 @@ function openModalFuncionario(f) {
   document.getElementById('fSalario').value      = f ? getSalarioVigente(f) : '';
   document.getElementById('fMesInicio').value    = f ? (f.start_month??currentMonth) : currentMonth;
   document.getElementById('fAnoInicio').value    = f ? (f.start_year??currentYear)   : currentYear;
-  document.getElementById('fComissao').value     = f ? f.tem_comissao : 'nao';
+  document.getElementById('fComissao').value     = f ? temComissaoStr(f) : 'nao';
   document.getElementById('fPct').value          = f ? f.pct_comissao : '';
-  document.getElementById('fPctGroup').style.display = (f && f.tem_comissao==='sim') ? '' : 'none';
+  document.getElementById('fPctGroup').style.display = (f && f.tem_comissao===true) ? '' : 'none';
   openModal('modalFuncionario');
 }
 function toggleComissao() {
@@ -889,7 +892,7 @@ async function salvarFuncionario() {
   const novoSalario = parseFloat(document.getElementById('fSalario').value)||0;
   const start_month = parseInt(document.getElementById('fMesInicio').value);
   const start_year  = parseInt(document.getElementById('fAnoInicio').value)||currentYear;
-  const tem_comissao= document.getElementById('fComissao').value;
+  const temComissaoVal = document.getElementById('fComissao').value === 'sim'; // boolean
   const pct_comissao= parseFloat(document.getElementById('fPct').value)||0;
   if(!nome) return alert('Informe o nome.');
   try {
@@ -904,7 +907,8 @@ async function salvarFuncionario() {
         hist = [...hist, {valor:novoSalario, year:currentYear, month:currentMonth}];
       }
       await dbUpdate('funcionarios', id, {
-        nome, cargo, salario: novoSalario, tem_comissao, pct_comissao,
+        nome, cargo, salario: novoSalario,
+        tem_comissao: temComissaoVal, pct_comissao,
         salario_historico: hist
       });
     } else {
@@ -912,7 +916,7 @@ async function salvarFuncionario() {
         id: uid(), nome, cargo, salario: novoSalario,
         start_year, start_month,
         salario_historico: [{valor:novoSalario, year:start_year, month:start_month}],
-        tem_comissao, pct_comissao, ativo: true
+        tem_comissao: temComissaoVal, pct_comissao, ativo: true
       });
     }
     clearFuncsCache(); cacheClear();
@@ -942,12 +946,12 @@ async function renderFuncionarios() {
         <td><strong>${f.nome}</strong></td>
         <td>${f.cargo||'—'}</td>
         <td>${fmt(sal)}</td>
-        <td>${f.tem_comissao==='sim'?`<span class="badge badge-green">Sim — ${f.pct_comissao}%</span>`:'<span class="badge badge-gray">Não</span>'}</td>
+        <td>${f.tem_comissao===true?`<span class="badge badge-green">Sim — ${f.pct_comissao}%</span>`:'<span class="badge badge-gray">Não</span>'}</td>
         <td>${adm}</td>
-        <td><span class="badge ${f.ativo!==false?'badge-blue':'badge-gray'}">${f.ativo!==false?'Ativo':'Inativo'}</span></td>
+        <td><span class="badge ${f.ativo===true?'badge-blue':'badge-gray'}">${f.ativo===true?'Ativo':'Inativo'}</span></td>
         <td style="white-space:nowrap;">
           <button class="btn btn-ghost btn-sm btn-icon" onclick='openModalFuncionario(${JSON.stringify(f).replace(/'/g,"&#39;")})' title="Editar">✏️</button>
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="toggleAtivo('${f.id}')" title="${f.ativo!==false?'Desativar':'Ativar'}">${f.ativo!==false?'⏸':'▶'}</button>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="toggleAtivo('${f.id}')" title="${f.ativo===true?'Desativar':'Ativar'}">${f.ativo===true?'⏸':'▶'}</button>
           <button class="btn btn-danger btn-sm btn-icon" onclick="excluirFuncionario('${f.id}')" title="Excluir">🗑</button>
         </td>`;
       tbody.appendChild(tr);
@@ -962,7 +966,7 @@ async function toggleAtivo(id) {
   const funcs = await getFuncs();
   const f = funcs.find(x=>x.id===id);
   if(!f) return;
-  await dbUpdate('funcionarios', id, { ativo: f.ativo === false });
+  await dbUpdate('funcionarios', id, { ativo: !f.ativo });
   clearFuncsCache(); cacheClear();
   renderFuncionarios();
 }
@@ -1208,7 +1212,7 @@ async function preencherPctComissao() {
   const id = document.getElementById('cmFuncionario').value;
   const funcs = await getFuncs();
   const f = funcs.find(x=>x.id===id);
-  if(f&&f.tem_comissao==='sim') document.getElementById('cmPct').value=f.pct_comissao;
+  if(f&&f.tem_comissao===true) document.getElementById('cmPct').value=f.pct_comissao;
   calcComissao();
 }
 function calcComissao() {
