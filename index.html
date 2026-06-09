@@ -254,6 +254,19 @@
     .danger-zone h3 { color: var(--danger); margin-bottom: 8px; }
     .danger-zone p { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
 
+    /* LOADING */
+    .loading { text-align: center; padding: 40px; color: var(--muted); font-size: 15px; }
+    .loading::before { content: '⏳ '; }
+
+    /* SYNC STATUS */
+    #syncStatus {
+      font-size: 11px; padding: 3px 10px; border-radius: 20px;
+      background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7);
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    #syncStatus.ok  { background: rgba(46,204,113,0.2); color: #a8f0c6; }
+    #syncStatus.err { background: rgba(231,76,60,0.2);  color: #f5a6a0; }
+
     /* PAGE */
     .page { display: none; }
     .page.active { display: block; }
@@ -277,6 +290,7 @@
     </div>
   </div>
   <div class="header-actions">
+    <span id="syncStatus">🔄 conectando…</span>
     <button class="btn btn-ghost btn-sm" onclick="exportData()">⬇ Exportar</button>
     <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Imprimir</button>
   </div>
@@ -650,6 +664,62 @@
 
 <script>
 // =============================================
+//  SUPABASE CONFIG
+// =============================================
+const SUPA_URL = 'https://eqfptfhmgmzyuudmmvwh.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxZnB0ZmhtZ216eXV1ZG1tdndoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMTYwMzksImV4cCI6MjA5NjU5MjAzOX0.jh4C0XHm4t6__ZS-JJaseKNMGGDDdVupq728qQezHXY';
+
+const HEADERS = {
+  'apikey': SUPA_KEY,
+  'Authorization': 'Bearer ' + SUPA_KEY,
+  'Content-Type': 'application/json',
+  'Prefer': 'return=representation'
+};
+
+function setSyncStatus(state, msg) {
+  const el = document.getElementById('syncStatus');
+  el.className = state; // 'ok' | 'err' | ''
+  el.textContent = msg;
+}
+
+async function dbGet(table, filter = '') {
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?${filter}`, { headers: HEADERS });
+  if (!r.ok) { const e = await r.text(); throw new Error(e); }
+  return r.json();
+}
+async function dbInsert(table, data) {
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, {
+    method: 'POST', headers: HEADERS, body: JSON.stringify(data)
+  });
+  if (!r.ok) { const e = await r.text(); throw new Error(e); }
+  return r.json();
+}
+async function dbUpdate(table, id, data) {
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: HEADERS, body: JSON.stringify(data)
+  });
+  if (!r.ok) { const e = await r.text(); throw new Error(e); }
+  return r.json();
+}
+async function dbDelete(table, id) {
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: HEADERS
+  });
+  if (!r.ok) { const e = await r.text(); throw new Error(e); }
+}
+async function dbDeleteAll(table) {
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=neq.___none___`, {
+    method: 'DELETE', headers: HEADERS
+  });
+  if (!r.ok) { const e = await r.text(); throw new Error(e); }
+}
+
+// Month-scoped queries
+const mFilter = (extra='') => `year=eq.${currentYear}&month=eq.${currentMonth}${extra?'&'+extra:''}`;
+const loadM  = (t, extra='') => dbGet(t, mFilter(extra));
+const loadAll = (t)           => dbGet(t);
+
+// =============================================
 //  CORE
 // =============================================
 const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
@@ -659,36 +729,56 @@ let currentYear  = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
 let currentPage  = 'resumo';
 
-const key  = s => `fi_${currentYear}_${currentMonth}_${s}`;
-const gKey = s => `fi_${s}`;
-const load  = s => JSON.parse(localStorage.getItem(key(s))  || '[]');
-const loadG = s => JSON.parse(localStorage.getItem(gKey(s)) || '[]');
-const save  = (s,d) => localStorage.setItem(key(s),  JSON.stringify(d));
-const saveG = (s,d) => localStorage.setItem(gKey(s), JSON.stringify(d));
-const uid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
-const fmt   = v => 'R$ ' + Number(v||0).toFixed(2).replace('.',',');
-const getNome = id => { const f=loadG('funcionarios').find(x=>x.id===id); return f?f.nome:'?'; };
+// In-memory cache so renders don't hammer the DB
+let _cache = {};
+function cacheKey(table, year, month) {
+  return `${table}_${year}_${month}`;
+}
+function cacheSet(table, year, month, data) {
+  _cache[cacheKey(table, year, month)] = data;
+}
+function cacheGet(table, year, month) {
+  return _cache[cacheKey(table, year, month)];
+}
+function cacheClear() { _cache = {}; }
 
-// Salário vigente do funcionário para o mês/ano atual
+const uid  = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const fmt  = v => 'R$ ' + Number(v||0).toFixed(2).replace('.',',');
+
+// All funcionarios (global, cached)
+let _funcs = null;
+async function getFuncs(force=false) {
+  if (!force && _funcs) return _funcs;
+  _funcs = await dbGet('funcionarios', 'order=nome.asc');
+  return _funcs;
+}
+function clearFuncsCache() { _funcs = null; }
+
 function getSalarioVigente(f) {
-  if (!f.salarioHistorico || !f.salarioHistorico.length) return f.salario||0;
-  // filtra entradas <= mês atual e pega a mais recente
-  const validas = f.salarioHistorico.filter(h =>
+  const hist = f.salario_historico || [];
+  if (!hist.length) return f.salario || 0;
+  const validas = hist.filter(h =>
     h.year < currentYear || (h.year === currentYear && h.month <= currentMonth)
   );
-  if (!validas.length) return 0; // admitido depois
+  if (!validas.length) return 0;
   validas.sort((a,b) => (b.year*12+b.month) - (a.year*12+a.month));
   return validas[0].valor;
 }
 
-// Funcionários ativos no mês atual
-function funcDoMes() {
-  return loadG('funcionarios').filter(f => {
+async function funcDoMes() {
+  const all = await getFuncs();
+  return all.filter(f => {
     if (f.ativo === false) return false;
-    const sy = f.startYear || 0;
-    const sm = f.startMonth != null ? f.startMonth : 0;
+    const sy = f.start_year || 0;
+    const sm = f.start_month != null ? f.start_month : 0;
     return currentYear > sy || (currentYear === sy && currentMonth >= sm);
   });
+}
+
+function getNome(id) {
+  if (!_funcs) return '?';
+  const f = _funcs.find(x => x.id === id);
+  return f ? f.nome : '?';
 }
 
 // =============================================
@@ -714,7 +804,7 @@ function showPage(p) {
   document.getElementById('nav-'+p).classList.add('active');
   currentPage=p; refreshPage(p);
 }
-function refreshAll() { refreshPage(currentPage); }
+function refreshAll() { cacheClear(); refreshPage(currentPage); }
 function refreshPage(p) {
   ({resumo:renderResumo, batimento:renderBatimento, salarios:renderSalarios,
     vales:renderVales, compras:renderCompras, descontos:renderDescontos,
@@ -725,31 +815,51 @@ function refreshPage(p) {
 // =============================================
 //  COPIAR SALÁRIOS
 // =============================================
-function copiarSalariosProximoMes() {
+async function copiarSalariosProximoMes() {
   let nm = currentMonth+1, ny = currentYear;
   if(nm>11){nm=0;ny++;}
   if(!confirm(`Copiar parcelas (dia 20 e dia 5) de ${MESES[currentMonth]}/${currentYear} → ${MESES[nm]}/${ny}?`)) return;
-  const src = load('salarios');
-  const destKey = `fi_${ny}_${nm}_salarios`;
-  const dest = JSON.parse(localStorage.getItem(destKey)||'[]');
-  src.forEach(s => {
-    const i = dest.findIndex(x=>x.funcId===s.funcId);
-    if(i>=0) dest[i]={...s}; else dest.push({...s});
-  });
-  localStorage.setItem(destKey, JSON.stringify(dest));
-  alert(`Salários copiados para ${MESES[nm]}/${ny}!`);
+  try {
+    setSyncStatus('', '🔄 copiando…');
+    const src = await dbGet('salarios', mFilter());
+    for (const s of src) {
+      const existing = await dbGet('salarios', `year=eq.${ny}&month=eq.${nm}&func_id=eq.${s.func_id}`);
+      const payload = { year: ny, month: nm, func_id: s.func_id, parcela20: s.parcela20, parcela5: s.parcela5 };
+      if (existing.length) {
+        await dbUpdate('salarios', existing[0].id, payload);
+      } else {
+        await dbInsert('salarios', { id: uid(), ...payload });
+      }
+    }
+    setSyncStatus('ok', '✅ sincronizado');
+    alert(`Salários copiados para ${MESES[nm]}/${ny}!`);
+  } catch(e) {
+    setSyncStatus('err', '❌ erro');
+    alert('Erro ao copiar: ' + e.message);
+  }
 }
 
 // =============================================
 //  ZERAR
 // =============================================
-function zerarTudo() {
+async function zerarTudo() {
   if(!confirm('ATENÇÃO: Isso vai apagar TODOS os dados (funcionários, lançamentos, tudo). Tem certeza?')) return;
   if(!confirm('Segunda confirmação: realmente quer apagar tudo?')) return;
-  const keys = Object.keys(localStorage).filter(k=>k.startsWith('fi_'));
-  keys.forEach(k=>localStorage.removeItem(k));
-  alert('Dados zerados! Você pode começar do zero.');
-  refreshAll();
+  try {
+    setSyncStatus('', '🔄 apagando…');
+    await Promise.all([
+      dbDeleteAll('salarios'), dbDeleteAll('vales'), dbDeleteAll('compras'),
+      dbDeleteAll('descontos'), dbDeleteAll('comissoes'), dbDeleteAll('encargos'),
+      dbDeleteAll('funcionarios')
+    ]);
+    clearFuncsCache(); cacheClear();
+    setSyncStatus('ok', '✅ zerado');
+    alert('Dados zerados! Você pode começar do zero.');
+    refreshAll();
+  } catch(e) {
+    setSyncStatus('err', '❌ erro: ' + e.message);
+    alert('Erro ao zerar: ' + e.message);
+  }
 }
 
 // =============================================
@@ -761,269 +871,344 @@ function openModalFuncionario(f) {
   document.getElementById('fNome').value         = f ? f.nome : '';
   document.getElementById('fCargo').value        = f ? f.cargo : '';
   document.getElementById('fSalario').value      = f ? getSalarioVigente(f) : '';
-  document.getElementById('fMesInicio').value    = f ? (f.startMonth??currentMonth) : currentMonth;
-  document.getElementById('fAnoInicio').value    = f ? (f.startYear??currentYear)   : currentYear;
-  document.getElementById('fComissao').value     = f ? f.temComissao : 'nao';
-  document.getElementById('fPct').value          = f ? f.pctComissao : '';
-  document.getElementById('fPctGroup').style.display = (f && f.temComissao==='sim') ? '' : 'none';
+  document.getElementById('fMesInicio').value    = f ? (f.start_month??currentMonth) : currentMonth;
+  document.getElementById('fAnoInicio').value    = f ? (f.start_year??currentYear)   : currentYear;
+  document.getElementById('fComissao').value     = f ? f.tem_comissao : 'nao';
+  document.getElementById('fPct').value          = f ? f.pct_comissao : '';
+  document.getElementById('fPctGroup').style.display = (f && f.tem_comissao==='sim') ? '' : 'none';
   openModal('modalFuncionario');
 }
 function toggleComissao() {
   document.getElementById('fPctGroup').style.display =
     document.getElementById('fComissao').value==='sim' ? '' : 'none';
 }
-function salvarFuncionario() {
+async function salvarFuncionario() {
   const id          = document.getElementById('fId').value;
   const nome        = document.getElementById('fNome').value.trim();
   const cargo       = document.getElementById('fCargo').value.trim();
   const novoSalario = parseFloat(document.getElementById('fSalario').value)||0;
-  const startMonth  = parseInt(document.getElementById('fMesInicio').value);
-  const startYear   = parseInt(document.getElementById('fAnoInicio').value)||currentYear;
-  const temComissao = document.getElementById('fComissao').value;
-  const pctComissao = parseFloat(document.getElementById('fPct').value)||0;
+  const start_month = parseInt(document.getElementById('fMesInicio').value);
+  const start_year  = parseInt(document.getElementById('fAnoInicio').value)||currentYear;
+  const tem_comissao= document.getElementById('fComissao').value;
+  const pct_comissao= parseFloat(document.getElementById('fPct').value)||0;
   if(!nome) return alert('Informe o nome.');
-
-  const funcs = loadG('funcionarios');
-  if(id) {
-    const idx = funcs.findIndex(x=>x.id===id);
-    if(idx<0) return;
-    const f = funcs[idx];
-    // Se salário mudou, adiciona ao histórico
-    const salAtual = getSalarioVigente(f);
-    if(novoSalario !== salAtual) {
-      if(!f.salarioHistorico) f.salarioHistorico=[];
-      f.salarioHistorico.push({valor:novoSalario, year:currentYear, month:currentMonth});
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    if(id) {
+      const funcs = await getFuncs();
+      const f = funcs.find(x=>x.id===id);
+      if(!f) return;
+      const salAtual = getSalarioVigente(f);
+      let hist = f.salario_historico || [];
+      if(novoSalario !== salAtual) {
+        hist = [...hist, {valor:novoSalario, year:currentYear, month:currentMonth}];
+      }
+      await dbUpdate('funcionarios', id, {
+        nome, cargo, salario: novoSalario, tem_comissao, pct_comissao,
+        salario_historico: hist
+      });
+    } else {
+      await dbInsert('funcionarios', {
+        id: uid(), nome, cargo, salario: novoSalario,
+        start_year, start_month,
+        salario_historico: [{valor:novoSalario, year:start_year, month:start_month}],
+        tem_comissao, pct_comissao, ativo: true
+      });
     }
-    f.nome=nome; f.cargo=cargo; f.salario=novoSalario;
-    f.temComissao=temComissao; f.pctComissao=pctComissao;
-  } else {
-    funcs.push({
-      id: uid(), nome, cargo, salario: novoSalario,
-      startYear, startMonth,
-      salarioHistorico: [{valor:novoSalario, year:startYear, month:startMonth}],
-      temComissao, pctComissao, ativo: true
-    });
+    clearFuncsCache(); cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalFuncionario');
+    renderFuncionarios();
+  } catch(e) {
+    setSyncStatus('err', '❌ erro');
+    alert('Erro: ' + e.message);
   }
-  saveG('funcionarios', funcs);
-  closeModal('modalFuncionario');
+}
+async function renderFuncionarios() {
+  const tbody = document.querySelector('#funcTable tbody');
+  tbody.innerHTML = '<tr><td colspan="7" class="loading">Carregando…</td></tr>';
+  try {
+    const funcs = await getFuncs(true);
+    tbody.innerHTML = '';
+    if(!funcs.length) {
+      tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px;">Nenhum funcionário cadastrado.</td></tr>';
+      return;
+    }
+    funcs.forEach(f => {
+      const sal = getSalarioVigente(f);
+      const adm = `${MESES[f.start_month||0].slice(0,3)}/${f.start_year||'?'}`;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${f.nome}</strong></td>
+        <td>${f.cargo||'—'}</td>
+        <td>${fmt(sal)}</td>
+        <td>${f.tem_comissao==='sim'?`<span class="badge badge-green">Sim — ${f.pct_comissao}%</span>`:'<span class="badge badge-gray">Não</span>'}</td>
+        <td>${adm}</td>
+        <td><span class="badge ${f.ativo!==false?'badge-blue':'badge-gray'}">${f.ativo!==false?'Ativo':'Inativo'}</span></td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-ghost btn-sm btn-icon" onclick='openModalFuncionario(${JSON.stringify(f).replace(/'/g,"&#39;")})' title="Editar">✏️</button>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="toggleAtivo('${f.id}')" title="${f.ativo!==false?'Desativar':'Ativar'}">${f.ativo!==false?'⏸':'▶'}</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="excluirFuncionario('${f.id}')" title="Excluir">🗑</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) {
+    tbody.innerHTML=`<tr><td colspan="7" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`;
+    setSyncStatus('err', '❌ erro');
+  }
+}
+async function toggleAtivo(id) {
+  const funcs = await getFuncs();
+  const f = funcs.find(x=>x.id===id);
+  if(!f) return;
+  await dbUpdate('funcionarios', id, { ativo: f.ativo === false });
+  clearFuncsCache(); cacheClear();
   renderFuncionarios();
 }
-function renderFuncionarios() {
-  const funcs = loadG('funcionarios');
-  const tbody = document.querySelector('#funcTable tbody');
-  tbody.innerHTML = '';
-  if(!funcs.length) {
-    tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px;">Nenhum funcionário cadastrado.</td></tr>';
-    return;
-  }
-  funcs.forEach(f => {
-    const sal = getSalarioVigente(f);
-    const adm = `${MESES[f.startMonth||0].slice(0,3)}/${f.startYear||'?'}`;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><strong>${f.nome}</strong></td>
-      <td>${f.cargo||'—'}</td>
-      <td>${fmt(sal)}</td>
-      <td>${f.temComissao==='sim'?`<span class="badge badge-green">Sim — ${f.pctComissao}%</span>`:'<span class="badge badge-gray">Não</span>'}</td>
-      <td>${adm}</td>
-      <td><span class="badge ${f.ativo!==false?'badge-blue':'badge-gray'}">${f.ativo!==false?'Ativo':'Inativo'}</span></td>
-      <td style="white-space:nowrap;">
-        <button class="btn btn-ghost btn-sm btn-icon" onclick='openModalFuncionario(${JSON.stringify(f).replace(/'/g,"&#39;")})' title="Editar">✏️</button>
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="toggleAtivo('${f.id}')" title="${f.ativo!==false?'Desativar':'Ativar'}">${f.ativo!==false?'⏸':'▶'}</button>
-        <button class="btn btn-danger btn-sm btn-icon" onclick="excluirFuncionario('${f.id}')" title="Excluir">🗑</button>
-      </td>`;
-    tbody.appendChild(tr);
-  });
-}
-function toggleAtivo(id) {
-  const funcs=loadG('funcionarios'), f=funcs.find(x=>x.id===id);
-  if(f){f.ativo=f.ativo===false; saveG('funcionarios',funcs); renderFuncionarios();}
-}
-function excluirFuncionario(id) {
+async function excluirFuncionario(id) {
   if(!confirm('Excluir este funcionário?')) return;
-  saveG('funcionarios',loadG('funcionarios').filter(x=>x.id!==id));
+  await dbDelete('funcionarios', id);
+  clearFuncsCache(); cacheClear();
   renderFuncionarios();
 }
 
 // =============================================
 //  SALÁRIOS
 // =============================================
-function openModalSalario(funcId) {
-  populateFuncSelects();
-  if(funcId){ document.getElementById('sFuncionario').value=funcId; preencherSalario(); }
+async function openModalSalario(funcId) {
+  await populateFuncSelects();
+  if(funcId){ document.getElementById('sFuncionario').value=funcId; await preencherSalario(); }
   openModal('modalSalario');
 }
-function preencherSalario() {
-  const id=document.getElementById('sFuncionario').value;
-  const f=loadG('funcionarios').find(x=>x.id===id);
+async function preencherSalario() {
+  const id = document.getElementById('sFuncionario').value;
+  const funcs = await getFuncs();
+  const f = funcs.find(x=>x.id===id);
   document.getElementById('sSalario').value = f ? getSalarioVigente(f) : '';
-  const s=load('salarios').find(x=>x.funcId===id)||{};
-  document.getElementById('sParcela20').value=s.parcela20||'';
-  document.getElementById('sParcela5').value=s.parcela5||'';
+  const sals = await dbGet('salarios', mFilter(`func_id=eq.${id}`));
+  const s = sals[0] || {};
+  document.getElementById('sParcela20').value = s.parcela20||'';
+  document.getElementById('sParcela5').value  = s.parcela5||'';
 }
-function salvarSalario() {
-  const funcId=document.getElementById('sFuncionario').value;
-  if(!funcId) return alert('Selecione um funcionário.');
-  const parcela20=parseFloat(document.getElementById('sParcela20').value)||0;
-  const parcela5 =parseFloat(document.getElementById('sParcela5').value)||0;
-  const arr=load('salarios');
-  const i=arr.findIndex(x=>x.funcId===funcId);
-  if(i>=0) arr[i]={funcId,parcela20,parcela5}; else arr.push({funcId,parcela20,parcela5});
-  save('salarios',arr); closeModal('modalSalario'); renderSalarios();
+async function salvarSalario() {
+  const func_id   = document.getElementById('sFuncionario').value;
+  if(!func_id) return alert('Selecione um funcionário.');
+  const parcela20 = parseFloat(document.getElementById('sParcela20').value)||0;
+  const parcela5  = parseFloat(document.getElementById('sParcela5').value)||0;
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    const existing = await dbGet('salarios', mFilter(`func_id=eq.${func_id}`));
+    const payload = { year:currentYear, month:currentMonth, func_id, parcela20, parcela5 };
+    if(existing.length) {
+      await dbUpdate('salarios', existing[0].id, payload);
+    } else {
+      await dbInsert('salarios', { id: uid(), ...payload });
+    }
+    cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalSalario');
+    renderSalarios();
+  } catch(e) {
+    setSyncStatus('err', '❌ erro');
+    alert('Erro: ' + e.message);
+  }
 }
-function renderSalarios() {
-  const funcs=funcDoMes(), sal=load('salarios');
-  const tbody=document.querySelector('#salariosTable tbody');
-  tbody.innerHTML='';
-  if(!funcs.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum funcionário neste mês.</td></tr>';return;}
-  funcs.forEach(f=>{
-    const s=sal.find(x=>x.funcId===f.id)||{};
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td><strong>${f.nome}</strong></td><td>${fmt(getSalarioVigente(f))}</td><td>${fmt(s.parcela20)}</td><td>${fmt(s.parcela5)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="openModalSalario('${f.id}')">✏️ Editar</button></td>`;
-    tbody.appendChild(tr);
-  });
+async function renderSalarios() {
+  const tbody = document.querySelector('#salariosTable tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="loading">Carregando…</td></tr>';
+  try {
+    const funcs = await funcDoMes();
+    const sals  = await dbGet('salarios', mFilter());
+    tbody.innerHTML = '';
+    if(!funcs.length){
+      tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum funcionário neste mês.</td></tr>';
+      return;
+    }
+    funcs.forEach(f=>{
+      const s = sals.find(x=>x.func_id===f.id)||{};
+      const tr = document.createElement('tr');
+      tr.innerHTML=`<td><strong>${f.nome}</strong></td><td>${fmt(getSalarioVigente(f))}</td><td>${fmt(s.parcela20)}</td><td>${fmt(s.parcela5)}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="openModalSalario('${f.id}')">✏️ Editar</button></td>`;
+      tbody.appendChild(tr);
+    });
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) {
+    tbody.innerHTML=`<tr><td colspan="5" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`;
+    setSyncStatus('err', '❌ erro');
+  }
 }
 
 // =============================================
 //  VALES
 // =============================================
-function openModalVale(item) {
-  populateFuncSelects();
-  document.getElementById('vId').value        = item?item.id:'';
-  document.getElementById('vFuncionario').value=item?item.funcId:'';
-  document.getElementById('vData').value      = item?item.data:'';
-  document.getElementById('vValor').value     = item?item.valor:'';
-  document.getElementById('vObs').value       = item?item.obs:'';
+async function openModalVale(item) {
+  await populateFuncSelects();
+  document.getElementById('vId').value          = item?item.id:'';
+  document.getElementById('vFuncionario').value = item?item.func_id:'';
+  document.getElementById('vData').value        = item?item.data:'';
+  document.getElementById('vValor').value       = item?item.valor:'';
+  document.getElementById('vObs').value         = item?item.descricao:'';
   openModal('modalVale');
 }
-function salvarVale() {
-  const id=document.getElementById('vId').value;
-  const funcId=document.getElementById('vFuncionario').value;
-  const data=document.getElementById('vData').value;
-  const valor=parseFloat(document.getElementById('vValor').value)||0;
-  const obs=document.getElementById('vObs').value;
-  if(!funcId||!data||!valor) return alert('Preencha funcionário, data e valor.');
-  const arr=load('vales');
-  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,data,valor,obs};}
-  else arr.push({id:uid(),funcId,data,valor,obs});
-  save('vales',arr); closeModal('modalVale'); renderVales();
+async function salvarVale() {
+  const id      = document.getElementById('vId').value;
+  const func_id = document.getElementById('vFuncionario').value;
+  const data    = document.getElementById('vData').value;
+  const valor   = parseFloat(document.getElementById('vValor').value)||0;
+  const descricao = document.getElementById('vObs').value;
+  if(!func_id||!data||!valor) return alert('Preencha funcionário, data e valor.');
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    const payload = { year:currentYear, month:currentMonth, func_id, data, valor, descricao };
+    if(id) await dbUpdate('vales', id, payload);
+    else   await dbInsert('vales', { id: uid(), ...payload });
+    cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalVale'); renderVales();
+  } catch(e) { setSyncStatus('err','❌ erro'); alert('Erro: '+e.message); }
 }
-function renderVales() {
-  const arr=load('vales'), tbody=document.querySelector('#valesTable tbody');
-  tbody.innerHTML='';
-  if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum vale lançado.</td></tr>';return;}
-  let tot=0;
-  arr.forEach(v=>{
-    tot+=v.valor;
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${v.data}</td><td>${getNome(v.funcId)}</td><td>${fmt(v.valor)}</td><td>${v.obs||'—'}</td>
-      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalVale(${JSON.stringify(v).replace(/'/g,"&#39;")})'>✏️</button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="del('vales','${v.id}',renderVales)">🗑</button></td>`;
-    tbody.appendChild(tr);
-  });
-  totalRow(tbody,2,tot,5);
+async function renderVales() {
+  const tbody = document.querySelector('#valesTable tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="loading">Carregando…</td></tr>';
+  try {
+    const arr = await dbGet('vales', mFilter('order=data.asc'));
+    tbody.innerHTML = '';
+    if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum vale lançado.</td></tr>';return;}
+    let tot=0;
+    arr.forEach(v=>{
+      tot+=Number(v.valor);
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${v.data}</td><td>${getNome(v.func_id)}</td><td>${fmt(v.valor)}</td><td>${v.descricao||'—'}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalVale(${JSON.stringify(v).replace(/'/g,"&#39;")})'>✏️</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="delItem('vales','${v.id}',renderVales)">🗑</button></td>`;
+      tbody.appendChild(tr);
+    });
+    totalRow(tbody,2,tot,5);
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) { tbody.innerHTML=`<tr><td colspan="5" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`; }
 }
 
 // =============================================
 //  COMPRAS
 // =============================================
-function openModalCompra(item) {
-  populateFuncSelects();
-  document.getElementById('cId').value        = item?item.id:'';
-  document.getElementById('cFuncionario').value=item?item.funcId:'';
-  document.getElementById('cData').value      = item?item.data:'';
-  document.getElementById('cValor').value     = item?item.valor:'';
-  document.getElementById('cProduto').value   = item?item.produto:'';
+async function openModalCompra(item) {
+  await populateFuncSelects();
+  document.getElementById('cId').value          = item?item.id:'';
+  document.getElementById('cFuncionario').value = item?item.func_id:'';
+  document.getElementById('cData').value        = item?item.data:'';
+  document.getElementById('cValor').value       = item?item.valor:'';
+  document.getElementById('cProduto').value     = item?item.produto:'';
   openModal('modalCompra');
 }
-function salvarCompra() {
-  const id=document.getElementById('cId').value;
-  const funcId=document.getElementById('cFuncionario').value;
-  const data=document.getElementById('cData').value;
-  const valor=parseFloat(document.getElementById('cValor').value)||0;
-  const produto=document.getElementById('cProduto').value;
-  if(!funcId||!data||!valor) return alert('Preencha funcionário, data e valor.');
-  const arr=load('compras');
-  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,data,valor,produto};}
-  else arr.push({id:uid(),funcId,data,valor,produto});
-  save('compras',arr); closeModal('modalCompra'); renderCompras();
+async function salvarCompra() {
+  const id      = document.getElementById('cId').value;
+  const func_id = document.getElementById('cFuncionario').value;
+  const data    = document.getElementById('cData').value;
+  const valor   = parseFloat(document.getElementById('cValor').value)||0;
+  const produto = document.getElementById('cProduto').value;
+  if(!func_id||!data||!valor) return alert('Preencha funcionário, data e valor.');
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    const payload = { year:currentYear, month:currentMonth, func_id, data, valor, produto, descricao: produto };
+    if(id) await dbUpdate('compras', id, payload);
+    else   await dbInsert('compras', { id: uid(), ...payload });
+    cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalCompra'); renderCompras();
+  } catch(e) { setSyncStatus('err','❌ erro'); alert('Erro: '+e.message); }
 }
-function renderCompras() {
-  const arr=load('compras'), tbody=document.querySelector('#comprasTable tbody');
-  tbody.innerHTML='';
-  if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhuma compra lançada.</td></tr>';return;}
-  let tot=0;
-  arr.forEach(c=>{
-    tot+=c.valor;
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${c.data}</td><td>${getNome(c.funcId)}</td><td>${c.produto||'—'}</td><td>${fmt(c.valor)}</td>
-      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalCompra(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✏️</button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="del('compras','${c.id}',renderCompras)">🗑</button></td>`;
-    tbody.appendChild(tr);
-  });
-  totalRow(tbody,3,tot,5);
+async function renderCompras() {
+  const tbody = document.querySelector('#comprasTable tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="loading">Carregando…</td></tr>';
+  try {
+    const arr = await dbGet('compras', mFilter('order=data.asc'));
+    tbody.innerHTML = '';
+    if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhuma compra lançada.</td></tr>';return;}
+    let tot=0;
+    arr.forEach(c=>{
+      tot+=Number(c.valor);
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${c.data}</td><td>${getNome(c.func_id)}</td><td>${c.produto||c.descricao||'—'}</td><td>${fmt(c.valor)}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalCompra(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✏️</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="delItem('compras','${c.id}',renderCompras)">🗑</button></td>`;
+      tbody.appendChild(tr);
+    });
+    totalRow(tbody,3,tot,5);
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) { tbody.innerHTML=`<tr><td colspan="5" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`; }
 }
 
 // =============================================
 //  DESCONTOS
 // =============================================
-function openModalDesconto(item) {
-  populateFuncSelects();
-  document.getElementById('dId').value         = item?item.id:'';
-  document.getElementById('dFuncionario').value = item?item.funcId:'';
+async function openModalDesconto(item) {
+  await populateFuncSelects();
+  document.getElementById('dId').value          = item?item.id:'';
+  document.getElementById('dFuncionario').value = item?item.func_id:'';
   document.getElementById('dTipo').value        = item?item.tipo:'Erro';
   document.getElementById('dData').value        = item?item.data:'';
   document.getElementById('dValor').value       = item?item.valor:'';
-  document.getElementById('dObs').value         = item?item.obs:'';
+  document.getElementById('dObs').value         = item?item.descricao:'';
   openModal('modalDesconto');
 }
-function salvarDesconto() {
-  const id=document.getElementById('dId').value;
-  const funcId=document.getElementById('dFuncionario').value;
-  const tipo=document.getElementById('dTipo').value;
-  const data=document.getElementById('dData').value;
-  const valor=parseFloat(document.getElementById('dValor').value)||0;
-  const obs=document.getElementById('dObs').value;
-  if(!funcId||!data||!valor) return alert('Preencha funcionário, data e valor.');
-  const arr=load('descontos');
-  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,tipo,data,valor,obs};}
-  else arr.push({id:uid(),funcId,tipo,data,valor,obs});
-  save('descontos',arr); closeModal('modalDesconto'); renderDescontos();
+async function salvarDesconto() {
+  const id      = document.getElementById('dId').value;
+  const func_id = document.getElementById('dFuncionario').value;
+  const tipo    = document.getElementById('dTipo').value;
+  const data    = document.getElementById('dData').value;
+  const valor   = parseFloat(document.getElementById('dValor').value)||0;
+  const descricao = document.getElementById('dObs').value;
+  if(!func_id||!data||!valor) return alert('Preencha funcionário, data e valor.');
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    const payload = { year:currentYear, month:currentMonth, func_id, tipo, data, valor, descricao };
+    if(id) await dbUpdate('descontos', id, payload);
+    else   await dbInsert('descontos', { id: uid(), ...payload });
+    cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalDesconto'); renderDescontos();
+  } catch(e) { setSyncStatus('err','❌ erro'); alert('Erro: '+e.message); }
 }
-function renderDescontos() {
-  const arr=load('descontos'), tbody=document.querySelector('#descontosTable tbody');
-  tbody.innerHTML='';
-  if(!arr.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Nenhum desconto lançado.</td></tr>';return;}
-  let tot=0;
-  arr.forEach(d=>{
-    tot+=d.valor;
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${d.data}</td><td>${getNome(d.funcId)}</td><td><span class="badge badge-red">${d.tipo}</span></td><td>${fmt(d.valor)}</td><td>${d.obs||'—'}</td>
-      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalDesconto(${JSON.stringify(d).replace(/'/g,"&#39;")})'>✏️</button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="del('descontos','${d.id}',renderDescontos)">🗑</button></td>`;
-    tbody.appendChild(tr);
-  });
-  totalRow(tbody,3,tot,6);
+async function renderDescontos() {
+  const tbody = document.querySelector('#descontosTable tbody');
+  tbody.innerHTML = '<tr><td colspan="6" class="loading">Carregando…</td></tr>';
+  try {
+    const arr = await dbGet('descontos', mFilter('order=data.asc'));
+    tbody.innerHTML = '';
+    if(!arr.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Nenhum desconto lançado.</td></tr>';return;}
+    let tot=0;
+    arr.forEach(d=>{
+      tot+=Number(d.valor);
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${d.data}</td><td>${getNome(d.func_id)}</td><td><span class="badge badge-red">${d.tipo||'Outro'}</span></td><td>${fmt(d.valor)}</td><td>${d.descricao||'—'}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalDesconto(${JSON.stringify(d).replace(/'/g,"&#39;")})'>✏️</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="delItem('descontos','${d.id}',renderDescontos)">🗑</button></td>`;
+      tbody.appendChild(tr);
+    });
+    totalRow(tbody,3,tot,6);
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) { tbody.innerHTML=`<tr><td colspan="6" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`; }
 }
 
 // =============================================
 //  COMISSÕES
 // =============================================
-function openModalComissao(item) {
-  populateFuncSelects();
-  document.getElementById('cmId').value         = item?item.id:'';
-  document.getElementById('cmFuncionario').value = item?item.funcId:'';
+async function openModalComissao(item) {
+  await populateFuncSelects();
+  document.getElementById('cmId').value          = item?item.id:'';
+  document.getElementById('cmFuncionario').value = item?item.func_id:'';
   document.getElementById('cmVendas').value      = item?item.vendas:'';
   document.getElementById('cmPct').value         = item?item.pct:'';
   document.getElementById('cmValor').value       = item?item.valor:'';
-  document.getElementById('cmObs').value         = item?item.obs:'';
+  document.getElementById('cmObs').value         = item?item.descricao:'';
   openModal('modalComissao');
 }
-function preencherPctComissao() {
-  const id=document.getElementById('cmFuncionario').value;
-  const f=loadG('funcionarios').find(x=>x.id===id);
-  if(f&&f.temComissao==='sim') document.getElementById('cmPct').value=f.pctComissao;
+async function preencherPctComissao() {
+  const id = document.getElementById('cmFuncionario').value;
+  const funcs = await getFuncs();
+  const f = funcs.find(x=>x.id===id);
+  if(f&&f.tem_comissao==='sim') document.getElementById('cmPct').value=f.pct_comissao;
   calcComissao();
 }
 function calcComissao() {
@@ -1031,74 +1216,94 @@ function calcComissao() {
   const p=parseFloat(document.getElementById('cmPct').value)||0;
   if(v&&p) document.getElementById('cmValor').value=(v*p/100).toFixed(2);
 }
-function salvarComissao() {
-  const id=document.getElementById('cmId').value;
-  const funcId=document.getElementById('cmFuncionario').value;
-  const vendas=parseFloat(document.getElementById('cmVendas').value)||0;
-  const pct=parseFloat(document.getElementById('cmPct').value)||0;
-  const valor=parseFloat(document.getElementById('cmValor').value)||0;
-  const obs=document.getElementById('cmObs').value;
-  if(!funcId||!valor) return alert('Preencha funcionário e valor.');
-  const arr=load('comissoes');
-  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,vendas,pct,valor,obs};}
-  else arr.push({id:uid(),funcId,vendas,pct,valor,obs});
-  save('comissoes',arr); closeModal('modalComissao'); renderComissoes();
+async function salvarComissao() {
+  const id      = document.getElementById('cmId').value;
+  const func_id = document.getElementById('cmFuncionario').value;
+  const vendas  = parseFloat(document.getElementById('cmVendas').value)||0;
+  const pct     = parseFloat(document.getElementById('cmPct').value)||0;
+  const valor   = parseFloat(document.getElementById('cmValor').value)||0;
+  const descricao = document.getElementById('cmObs').value;
+  if(!func_id||!valor) return alert('Preencha funcionário e valor.');
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    const payload = { year:currentYear, month:currentMonth, func_id, vendas, pct, valor, descricao };
+    if(id) await dbUpdate('comissoes', id, payload);
+    else   await dbInsert('comissoes', { id: uid(), ...payload });
+    cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalComissao'); renderComissoes();
+  } catch(e) { setSyncStatus('err','❌ erro'); alert('Erro: '+e.message); }
 }
-function renderComissoes() {
-  const arr=load('comissoes'), tbody=document.querySelector('#comissoesTable tbody');
-  tbody.innerHTML='';
-  if(!arr.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Nenhuma comissão lançada.</td></tr>';return;}
-  let tot=0;
-  arr.forEach(c=>{
-    tot+=c.valor;
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${getNome(c.funcId)}</td><td>${fmt(c.vendas)}</td><td>${c.pct||'—'}%</td><td>${fmt(c.valor)}</td><td>${c.obs||'—'}</td>
-      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalComissao(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✏️</button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="del('comissoes','${c.id}',renderComissoes)">🗑</button></td>`;
-    tbody.appendChild(tr);
-  });
-  totalRow(tbody,3,tot,6);
+async function renderComissoes() {
+  const tbody = document.querySelector('#comissoesTable tbody');
+  tbody.innerHTML = '<tr><td colspan="6" class="loading">Carregando…</td></tr>';
+  try {
+    const arr = await dbGet('comissoes', mFilter());
+    tbody.innerHTML = '';
+    if(!arr.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Nenhuma comissão lançada.</td></tr>';return;}
+    let tot=0;
+    arr.forEach(c=>{
+      tot+=Number(c.valor);
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${getNome(c.func_id)}</td><td>${fmt(c.vendas)}</td><td>${c.pct||'—'}%</td><td>${fmt(c.valor)}</td><td>${c.descricao||'—'}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalComissao(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✏️</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="delItem('comissoes','${c.id}',renderComissoes)">🗑</button></td>`;
+      tbody.appendChild(tr);
+    });
+    totalRow(tbody,3,tot,6);
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) { tbody.innerHTML=`<tr><td colspan="6" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`; }
 }
 
 // =============================================
 //  ENCARGOS
 // =============================================
-function openModalEncargo(item) {
-  populateFuncSelects();
-  document.getElementById('eId').value          = item?item.id:'';
-  document.getElementById('eTipo').value         = item?item.tipo:'Imposto';
-  document.getElementById('eValor').value        = item?item.valor:'';
-  document.getElementById('eFuncionario').value  = item?item.funcId:'';
-  document.getElementById('eObs').value          = item?item.obs:'';
+async function openModalEncargo(item) {
+  await populateFuncSelects();
+  document.getElementById('eId').value         = item?item.id:'';
+  document.getElementById('eTipo').value        = item?item.tipo:'Imposto';
+  document.getElementById('eValor').value       = item?item.valor:'';
+  document.getElementById('eFuncionario').value = item?item.func_id:'';
+  document.getElementById('eObs').value         = item?item.descricao:'';
   openModal('modalEncargo');
 }
-function salvarEncargo() {
-  const id=document.getElementById('eId').value;
-  const tipo=document.getElementById('eTipo').value;
-  const valor=parseFloat(document.getElementById('eValor').value)||0;
-  const funcId=document.getElementById('eFuncionario').value;
-  const obs=document.getElementById('eObs').value;
+async function salvarEncargo() {
+  const id      = document.getElementById('eId').value;
+  const tipo    = document.getElementById('eTipo').value;
+  const valor   = parseFloat(document.getElementById('eValor').value)||0;
+  const func_id = document.getElementById('eFuncionario').value;
+  const descricao = document.getElementById('eObs').value;
   if(!valor) return alert('Informe o valor.');
-  const arr=load('encargos');
-  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,tipo,valor,funcId,obs};}
-  else arr.push({id:uid(),tipo,valor,funcId,obs});
-  save('encargos',arr); closeModal('modalEncargo'); renderEncargos();
+  try {
+    setSyncStatus('', '🔄 salvando…');
+    const payload = { year:currentYear, month:currentMonth, tipo, valor, func_id: func_id||null, descricao };
+    if(id) await dbUpdate('encargos', id, payload);
+    else   await dbInsert('encargos', { id: uid(), ...payload });
+    cacheClear();
+    setSyncStatus('ok', '✅ sincronizado');
+    closeModal('modalEncargo'); renderEncargos();
+  } catch(e) { setSyncStatus('err','❌ erro'); alert('Erro: '+e.message); }
 }
-function renderEncargos() {
-  const arr=load('encargos'), tbody=document.querySelector('#encargosTable tbody');
-  tbody.innerHTML='';
-  if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum encargo lançado.</td></tr>';return;}
-  let tot=0;
-  arr.forEach(e=>{
-    tot+=e.valor;
-    const cls=e.tipo==='Imposto'?'badge-red':e.tipo==='Vale Transporte'?'badge-blue':'badge-green';
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td><span class="badge ${cls}">${e.tipo}</span></td><td>${e.funcId?getNome(e.funcId):'Geral'}</td><td>${fmt(e.valor)}</td><td>${e.obs||'—'}</td>
-      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalEncargo(${JSON.stringify(e).replace(/'/g,"&#39;")})'>✏️</button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="del('encargos','${e.id}',renderEncargos)">🗑</button></td>`;
-    tbody.appendChild(tr);
-  });
-  totalRow(tbody,2,tot,5);
+async function renderEncargos() {
+  const tbody = document.querySelector('#encargosTable tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="loading">Carregando…</td></tr>';
+  try {
+    const arr = await dbGet('encargos', mFilter());
+    tbody.innerHTML = '';
+    if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum encargo lançado.</td></tr>';return;}
+    let tot=0;
+    arr.forEach(e=>{
+      tot+=Number(e.valor);
+      const cls=e.tipo==='Imposto'?'badge-red':e.tipo==='Vale Transporte'?'badge-blue':'badge-green';
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td><span class="badge ${cls}">${e.tipo}</span></td><td>${e.func_id?getNome(e.func_id):'Geral'}</td><td>${fmt(e.valor)}</td><td>${e.descricao||'—'}</td>
+        <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalEncargo(${JSON.stringify(e).replace(/'/g,"&#39;")})'>✏️</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="delItem('encargos','${e.id}',renderEncargos)">🗑</button></td>`;
+      tbody.appendChild(tr);
+    });
+    totalRow(tbody,2,tot,5);
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) { tbody.innerHTML=`<tr><td colspan="5" style="color:var(--danger);padding:20px;">Erro: ${e.message}</td></tr>`; }
 }
 
 // =============================================
@@ -1110,12 +1315,13 @@ function totalRow(tbody, vcol, total, cols) {
   for(let i=0;i<cols;i++) h+=`<td>${i===0?'TOTAL':i===vcol?fmt(total):''}</td>`;
   tr.innerHTML=h; tbody.appendChild(tr);
 }
-function del(sec,id,cb) {
+async function delItem(sec, id, cb) {
   if(!confirm('Excluir este lançamento?')) return;
-  save(sec,load(sec).filter(x=>x.id!==id)); cb();
+  await dbDelete(sec, id);
+  cacheClear(); cb();
 }
-function populateFuncSelects() {
-  const funcs=funcDoMes();
+async function populateFuncSelects() {
+  const funcs = await funcDoMes();
   ['sFuncionario','vFuncionario','cFuncionario','dFuncionario','cmFuncionario'].forEach(sid=>{
     const sel=document.getElementById(sid); if(!sel) return;
     const val=sel.value;
@@ -1136,162 +1342,169 @@ document.querySelectorAll('.modal-overlay').forEach(el=>{
 });
 
 // =============================================
-//  CÁLCULO POR FUNCIONÁRIO
+//  CÁLCULO POR FUNCIONÁRIO (usa dados já carregados)
 // =============================================
-function calcFunc(f) {
-  const sal    = getSalarioVigente(f);
-  const s      = load('salarios').find(x=>x.funcId===f.id)||{};
-  const vales    = load('vales').filter(x=>x.funcId===f.id);
-  const compras  = load('compras').filter(x=>x.funcId===f.id);
-  const descontos= load('descontos').filter(x=>x.funcId===f.id);
-  const comissoes= load('comissoes').filter(x=>x.funcId===f.id);
-  const tV=vales.reduce((a,b)=>a+b.valor,0);
-  const tC=compras.reduce((a,b)=>a+b.valor,0);
-  const tD=descontos.reduce((a,b)=>a+b.valor,0);
-  const tCom=comissoes.reduce((a,b)=>a+b.valor,0);
-  const bruto=sal+tCom;
-  const ded=tV+tC+tD;
-  const liq=bruto-ded;
-  const p20=s.parcela20||0, p5=s.parcela5||0;
+function calcFuncFromData(f, sals, valesArr, comprasArr, descontosArr, comissoesArr) {
+  const sal      = getSalarioVigente(f);
+  const s        = sals.find(x=>x.func_id===f.id)||{};
+  const vales    = valesArr.filter(x=>x.func_id===f.id);
+  const compras  = comprasArr.filter(x=>x.func_id===f.id);
+  const descontos= descontosArr.filter(x=>x.func_id===f.id);
+  const comissoes= comissoesArr.filter(x=>x.func_id===f.id);
+  const tV  = vales.reduce((a,b)=>a+Number(b.valor),0);
+  const tC  = compras.reduce((a,b)=>a+Number(b.valor),0);
+  const tD  = descontos.reduce((a,b)=>a+Number(b.valor),0);
+  const tCom= comissoes.reduce((a,b)=>a+Number(b.valor),0);
+  const bruto = sal + tCom;
+  const ded   = tV + tC + tD;
+  const liq   = bruto - ded;
+  const p20   = Number(s.parcela20)||0;
+  const p5    = Number(s.parcela5)||0;
   return {sal,tV,tC,tD,tCom,bruto,ded,liq,p20,p5,vales,compras,descontos,comissoes};
 }
 
 // =============================================
 //  RESUMO
 // =============================================
-function renderResumo() {
-  const funcs=funcDoMes();
+async function renderResumo() {
   document.getElementById('resumoTitle').textContent=`Resumo — ${MESES[currentMonth]} / ${currentYear}`;
+  document.getElementById('tiles').innerHTML='<div class="loading" style="grid-column:1/-1">Carregando…</div>';
+  document.getElementById('resumoDetalhado').innerHTML='';
+  try {
+    const [funcs, sals, valesArr, comprasArr, descontosArr, comissoesArr, encargos] = await Promise.all([
+      funcDoMes(),
+      dbGet('salarios',  mFilter()),
+      dbGet('vales',     mFilter()),
+      dbGet('compras',   mFilter()),
+      dbGet('descontos', mFilter()),
+      dbGet('comissoes', mFilter()),
+      dbGet('encargos',  mFilter()),
+    ]);
 
-  let tBruto=0,tDed=0,tLiq=0,tPago=0;
-  funcs.forEach(f=>{const c=calcFunc(f);tBruto+=c.bruto;tDed+=c.ded;tLiq+=c.liq;tPago+=c.p20+c.p5;});
-  const encargos=load('encargos');
-  const tEnc=encargos.reduce((a,b)=>a+b.valor,0);
+    let tBruto=0,tDed=0,tLiq=0,tPago=0;
+    funcs.forEach(f=>{
+      const c=calcFuncFromData(f,sals,valesArr,comprasArr,descontosArr,comissoesArr);
+      tBruto+=c.bruto; tDed+=c.ded; tLiq+=c.liq; tPago+=c.p20+c.p5;
+    });
+    const tEnc = encargos.reduce((a,b)=>a+Number(b.valor),0);
 
-  document.getElementById('tiles').innerHTML=`
-    <div class="tile" style="--tile-color:var(--primary)"><div class="tile-label">Total Bruto</div><div class="tile-value">${fmt(tBruto)}</div></div>
-    <div class="tile" style="--tile-color:var(--danger)"><div class="tile-label">Total Deduções</div><div class="tile-value">${fmt(tDed)}</div></div>
-    <div class="tile" style="--tile-color:var(--success)"><div class="tile-label">Total Líquido</div><div class="tile-value">${fmt(tLiq)}</div></div>
-    <div class="tile" style="--tile-color:#e8a020"><div class="tile-label">Total Pago</div><div class="tile-value">${fmt(tPago)}</div></div>
-    <div class="tile" style="--tile-color:var(--danger)"><div class="tile-label">Encargos</div><div class="tile-value">${fmt(tEnc)}</div></div>
-    <div class="tile" style="--tile-color:var(--primary)"><div class="tile-label">Custo Total</div><div class="tile-value">${fmt(tBruto+tEnc)}</div></div>
-  `;
+    document.getElementById('tiles').innerHTML=`
+      <div class="tile" style="--tile-color:var(--primary)"><div class="tile-label">Total Bruto</div><div class="tile-value">${fmt(tBruto)}</div></div>
+      <div class="tile" style="--tile-color:var(--danger)"><div class="tile-label">Total Deduções</div><div class="tile-value">${fmt(tDed)}</div></div>
+      <div class="tile" style="--tile-color:var(--success)"><div class="tile-label">Total Líquido</div><div class="tile-value">${fmt(tLiq)}</div></div>
+      <div class="tile" style="--tile-color:#e8a020"><div class="tile-label">Total Pago</div><div class="tile-value">${fmt(tPago)}</div></div>
+      <div class="tile" style="--tile-color:var(--danger)"><div class="tile-label">Encargos</div><div class="tile-value">${fmt(tEnc)}</div></div>
+      <div class="tile" style="--tile-color:var(--primary)"><div class="tile-label">Custo Total</div><div class="tile-value">${fmt(tBruto+tEnc)}</div></div>
+    `;
 
-  const div=document.getElementById('resumoDetalhado');
-  div.innerHTML='';
+    const div=document.getElementById('resumoDetalhado');
+    div.innerHTML='';
 
-  if(!funcs.length){
-    div.innerHTML=`<div class="card" style="text-align:center;color:var(--muted);padding:32px;">
-      Nenhum funcionário ativo neste mês.<br><br>
-      <button class="btn btn-primary btn-sm" onclick="showPage('funcionarios')">👥 Cadastrar Funcionários</button>
-    </div>`;
-    return;
-  }
-
-  funcs.forEach(f=>{
-    const c=calcFunc(f);
-    const saldo=c.liq-(c.p20+c.p5);
-    const saldoColor=saldo>0.01?'#e74c3c':saldo<-0.01?'#2ecc71':'#aaa';
-
-    let body='';
-
-    // Salário base
-    body+=`<div class="sub-section">
-      <div class="sub-label">Salário Base</div>
-      <div class="launch-row"><span class="launch-desc">Salário contratual</span><span class="launch-val cr">${fmt(c.sal)}</span></div>
-    </div>`;
-
-    // Comissões
-    if(c.comissoes.length){
-      body+=`<div class="sub-section"><div class="sub-label">Comissões</div>`;
-      c.comissoes.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.obs||'Comissão'}</span><span class="launch-val cr">${fmt(x.valor)}</span></div>`; });
-      body+=`</div>`;
-    }
-
-    // Vales
-    if(c.vales.length){
-      body+=`<div class="sub-section"><div class="sub-label">Vales Descontados</div>`;
-      c.vales.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">Vale${x.obs?' — '+x.obs:''}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
-      body+=`</div>`;
-    }
-
-    // Compras
-    if(c.compras.length){
-      body+=`<div class="sub-section"><div class="sub-label">Compras na Gráfica</div>`;
-      c.compras.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.produto||'Compra'}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
-      body+=`</div>`;
-    }
-
-    // Descontos
-    if(c.descontos.length){
-      body+=`<div class="sub-section"><div class="sub-label">Descontos (Erros / Faltas)</div>`;
-      c.descontos.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.tipo}${x.obs?' — '+x.obs:''}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
-      body+=`</div>`;
-    }
-
-    // Pagamentos
-    body+=`<div class="sub-section"><div class="sub-label">Pagamentos Realizados</div>
-      <div class="launch-row"><span class="launch-desc">Parcela Dia 20</span><span class="launch-val db">– ${fmt(c.p20)}</span></div>
-      <div class="launch-row"><span class="launch-desc">Parcela Dia 5</span><span class="launch-val db">– ${fmt(c.p5)}</span></div>
-    </div>`;
-
-    // Encargos deste funcionário
-    const encF=encargos.filter(e=>e.funcId===f.id);
-    if(encF.length){
-      body+=`<div class="sub-section"><div class="sub-label">Encargos Vinculados</div>`;
-      encF.forEach(e=>{ body+=`<div class="launch-row"><span class="launch-desc">${e.tipo}${e.obs?' — '+e.obs:''}</span><span class="launch-val db">– ${fmt(e.valor)}</span></div>`; });
-      body+=`</div>`;
-    }
-
-    const blockId='block_'+f.id;
-    const block=document.createElement('div');
-    block.className='func-block';
-    block.innerHTML=`
-      <div class="func-block-header" onclick="toggleBlock('${blockId}')">
-        <div>
-          <div class="func-fname">${f.nome}</div>
-          <div class="func-fsub">${f.cargo||'—'} &nbsp;·&nbsp; Base: ${fmt(c.sal)} &nbsp;·&nbsp; Bruto: ${fmt(c.bruto)} &nbsp;·&nbsp; Líquido: ${fmt(c.liq)}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div class="func-header-right">
-            <div class="func-saldo-label">Saldo a pagar</div>
-            <div class="func-saldo-val" style="color:${saldoColor}">${fmt(saldo)}</div>
-          </div>
-          <div class="func-arrow" id="arrow_${blockId}">▼</div>
-        </div>
-      </div>
-      <div class="func-block-body" id="${blockId}">
-        ${body}
-        <div class="func-totals">
-          <div class="func-total-item">Bruto: <b style="color:var(--primary)">${fmt(c.bruto)}</b></div>
-          <div class="func-total-item">Deduções: <b style="color:var(--danger)">– ${fmt(c.ded)}</b></div>
-          <div class="func-total-item">Líquido: <b style="color:var(--success)">${fmt(c.liq)}</b></div>
-          <div class="func-total-item">Pago (20+5): <b style="color:#e8a020">– ${fmt(c.p20+c.p5)}</b></div>
-          <div class="func-total-item">Saldo: <b style="color:${saldoColor}">${fmt(saldo)}</b></div>
-        </div>
+    if(!funcs.length){
+      div.innerHTML=`<div class="card" style="text-align:center;color:var(--muted);padding:32px;">
+        Nenhum funcionário ativo neste mês.<br><br>
+        <button class="btn btn-primary btn-sm" onclick="showPage('funcionarios')">👥 Cadastrar Funcionários</button>
       </div>`;
-    div.appendChild(block);
-  });
+      setSyncStatus('ok', '✅ sincronizado');
+      return;
+    }
 
-  // Encargos gerais
-  const encGerais=encargos.filter(e=>!e.funcId);
-  if(encGerais.length){
-    const tG=encGerais.reduce((a,b)=>a+b.valor,0);
-    let rows=encGerais.map(e=>`
-      <div class="launch-row" style="padding:9px 18px;border-bottom:1px solid #f0f2f5;">
-        <span class="launch-desc"><span class="badge ${e.tipo==='Imposto'?'badge-red':e.tipo==='Vale Transporte'?'badge-blue':'badge-green'}">${e.tipo}</span> ${e.obs||''}</span>
-        <span class="launch-val db">– ${fmt(e.valor)}</span>
-      </div>`).join('');
-    const egId='block_gerais';
-    const bl=document.createElement('div');
-    bl.className='enc-gerais';
-    bl.innerHTML=`
-      <div class="enc-gerais-header" onclick="toggleBlock('${egId}')">
-        <span>🏛️ Encargos Gerais da Empresa — Total: ${fmt(tG)}</span>
-        <span class="func-arrow" id="arrow_${egId}">▼</span>
-      </div>
-      <div class="func-block-body" id="${egId}">${rows}</div>`;
-    div.appendChild(bl);
+    funcs.forEach(f=>{
+      const c=calcFuncFromData(f,sals,valesArr,comprasArr,descontosArr,comissoesArr);
+      const saldo=c.liq-(c.p20+c.p5);
+      const saldoColor=saldo>0.01?'#e74c3c':saldo<-0.01?'#2ecc71':'#aaa';
+
+      let body='';
+      body+=`<div class="sub-section"><div class="sub-label">Salário Base</div>
+        <div class="launch-row"><span class="launch-desc">Salário contratual</span><span class="launch-val cr">${fmt(c.sal)}</span></div>
+      </div>`;
+      if(c.comissoes.length){
+        body+=`<div class="sub-section"><div class="sub-label">Comissões</div>`;
+        c.comissoes.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.descricao||'Comissão'}</span><span class="launch-val cr">${fmt(x.valor)}</span></div>`; });
+        body+=`</div>`;
+      }
+      if(c.vales.length){
+        body+=`<div class="sub-section"><div class="sub-label">Vales Descontados</div>`;
+        c.vales.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">Vale${x.descricao?' — '+x.descricao:''}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
+        body+=`</div>`;
+      }
+      if(c.compras.length){
+        body+=`<div class="sub-section"><div class="sub-label">Compras na Gráfica</div>`;
+        c.compras.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.produto||x.descricao||'Compra'}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
+        body+=`</div>`;
+      }
+      if(c.descontos.length){
+        body+=`<div class="sub-section"><div class="sub-label">Descontos (Erros / Faltas)</div>`;
+        c.descontos.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.tipo||'Desconto'}${x.descricao?' — '+x.descricao:''}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
+        body+=`</div>`;
+      }
+      body+=`<div class="sub-section"><div class="sub-label">Pagamentos Realizados</div>
+        <div class="launch-row"><span class="launch-desc">Parcela Dia 20</span><span class="launch-val db">– ${fmt(c.p20)}</span></div>
+        <div class="launch-row"><span class="launch-desc">Parcela Dia 5</span><span class="launch-val db">– ${fmt(c.p5)}</span></div>
+      </div>`;
+      const encF=encargos.filter(e=>e.func_id===f.id);
+      if(encF.length){
+        body+=`<div class="sub-section"><div class="sub-label">Encargos Vinculados</div>`;
+        encF.forEach(e=>{ body+=`<div class="launch-row"><span class="launch-desc">${e.tipo}${e.descricao?' — '+e.descricao:''}</span><span class="launch-val db">– ${fmt(e.valor)}</span></div>`; });
+        body+=`</div>`;
+      }
+
+      const blockId='block_'+f.id;
+      const block=document.createElement('div');
+      block.className='func-block';
+      block.innerHTML=`
+        <div class="func-block-header" onclick="toggleBlock('${blockId}')">
+          <div>
+            <div class="func-fname">${f.nome}</div>
+            <div class="func-fsub">${f.cargo||'—'} &nbsp;·&nbsp; Base: ${fmt(c.sal)} &nbsp;·&nbsp; Bruto: ${fmt(c.bruto)} &nbsp;·&nbsp; Líquido: ${fmt(c.liq)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="func-header-right">
+              <div class="func-saldo-label">Saldo a pagar</div>
+              <div class="func-saldo-val" style="color:${saldoColor}">${fmt(saldo)}</div>
+            </div>
+            <div class="func-arrow" id="arrow_${blockId}">▼</div>
+          </div>
+        </div>
+        <div class="func-block-body" id="${blockId}">
+          ${body}
+          <div class="func-totals">
+            <div class="func-total-item">Bruto: <b style="color:var(--primary)">${fmt(c.bruto)}</b></div>
+            <div class="func-total-item">Deduções: <b style="color:var(--danger)">– ${fmt(c.ded)}</b></div>
+            <div class="func-total-item">Líquido: <b style="color:var(--success)">${fmt(c.liq)}</b></div>
+            <div class="func-total-item">Pago (20+5): <b style="color:#e8a020">– ${fmt(c.p20+c.p5)}</b></div>
+            <div class="func-total-item">Saldo: <b style="color:${saldoColor}">${fmt(saldo)}</b></div>
+          </div>
+        </div>`;
+      div.appendChild(block);
+    });
+
+    // Encargos gerais
+    const encGerais=encargos.filter(e=>!e.func_id);
+    if(encGerais.length){
+      const tG=encGerais.reduce((a,b)=>a+Number(b.valor),0);
+      let rows=encGerais.map(e=>`
+        <div class="launch-row" style="padding:9px 18px;border-bottom:1px solid #f0f2f5;">
+          <span class="launch-desc"><span class="badge ${e.tipo==='Imposto'?'badge-red':e.tipo==='Vale Transporte'?'badge-blue':'badge-green'}">${e.tipo}</span> ${e.descricao||''}</span>
+          <span class="launch-val db">– ${fmt(e.valor)}</span>
+        </div>`).join('');
+      const egId='block_gerais';
+      const bl=document.createElement('div');
+      bl.className='enc-gerais';
+      bl.innerHTML=`
+        <div class="enc-gerais-header" onclick="toggleBlock('${egId}')">
+          <span>🏛️ Encargos Gerais da Empresa — Total: ${fmt(tG)}</span>
+          <span class="func-arrow" id="arrow_${egId}">▼</span>
+        </div>
+        <div class="func-block-body" id="${egId}">${rows}</div>`;
+      div.appendChild(bl);
+    }
+
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) {
+    document.getElementById('tiles').innerHTML='';
+    document.getElementById('resumoDetalhado').innerHTML=`<div class="card" style="color:var(--danger);padding:20px;">Erro ao carregar: ${e.message}</div>`;
+    setSyncStatus('err', '❌ erro');
   }
 }
 
@@ -1305,65 +1518,102 @@ function toggleBlock(id) {
 // =============================================
 //  BATIMENTO
 // =============================================
-function renderBatimento() {
+async function renderBatimento() {
   document.getElementById('batMes').textContent=`${MESES[currentMonth]} / ${currentYear}`;
-  const funcs=funcDoMes(), enc=load('encargos');
-  let tB=0,tD=0,tL=0,p20=0,p5=0;
-  funcs.forEach(f=>{const c=calcFunc(f);tB+=c.bruto;tD+=c.ded;tL+=c.liq;p20+=c.p20;p5+=c.p5;});
-  const tEnc=enc.reduce((a,b)=>a+b.valor,0);
-  const encVT=enc.filter(e=>e.tipo==='Vale Transporte').reduce((a,b)=>a+b.valor,0);
-  const encVA=enc.filter(e=>e.tipo==='Vale Alimentação').reduce((a,b)=>a+b.valor,0);
-  const encImp=enc.filter(e=>e.tipo==='Imposto').reduce((a,b)=>a+b.valor,0);
-  const encOut=enc.filter(e=>e.tipo==='Outro').reduce((a,b)=>a+b.valor,0);
-  const saldo=tL-(p20+p5);
-  const custo=tB+tEnc;
+  document.getElementById('batimentoContent').innerHTML='<div class="loading">Carregando…</div>';
+  try {
+    const [funcs, sals, valesArr, comprasArr, descontosArr, comissoesArr, enc] = await Promise.all([
+      funcDoMes(),
+      dbGet('salarios',  mFilter()),
+      dbGet('vales',     mFilter()),
+      dbGet('compras',   mFilter()),
+      dbGet('descontos', mFilter()),
+      dbGet('comissoes', mFilter()),
+      dbGet('encargos',  mFilter()),
+    ]);
 
-  const rows=[
-    ['(+) Total Bruto Folha',tB,'success'],
-    ['(–) Deduções (vales + compras + descontos)',tD,'danger'],
-    ['(=) Total Líquido a Pagar',tL,'primary'],
-    null,
-    ['(–) Parcelas Dia 20 pagas',p20,'accent2'],
-    ['(–) Parcelas Dia 5 pagas',p5,'accent2'],
-    ['(=) Saldo Ainda a Pagar',saldo,saldo>0.01?'danger':saldo<-0.01?'success':'primary'],
-    null,
-    ['(+) Impostos / FGTS / INSS',encImp,'danger'],
-    ['(+) Vale Transporte',encVT,'danger'],
-    ['(+) Vale Alimentação',encVA,'danger'],
-    ['(+) Outros Encargos',encOut,'danger'],
-    ['(=) Total Encargos',tEnc,'danger'],
-    null,
-    ['CUSTO TOTAL DA EMPRESA',custo,'primary'],
-  ];
+    let tB=0,tD=0,tL=0,p20=0,p5=0;
+    funcs.forEach(f=>{
+      const c=calcFuncFromData(f,sals,valesArr,comprasArr,descontosArr,comissoesArr);
+      tB+=c.bruto; tD+=c.ded; tL+=c.liq; p20+=c.p20; p5+=c.p5;
+    });
+    const tEnc =enc.reduce((a,b)=>a+Number(b.valor),0);
+    const encVT =enc.filter(e=>e.tipo==='Vale Transporte').reduce((a,b)=>a+Number(b.valor),0);
+    const encVA =enc.filter(e=>e.tipo==='Vale Alimentação').reduce((a,b)=>a+Number(b.valor),0);
+    const encImp=enc.filter(e=>e.tipo==='Imposto').reduce((a,b)=>a+Number(b.valor),0);
+    const encOut=enc.filter(e=>e.tipo==='Outro').reduce((a,b)=>a+Number(b.valor),0);
+    const saldo=tL-(p20+p5);
+    const custo=tB+tEnc;
 
-  document.getElementById('batimentoContent').innerHTML=rows.map(r=>{
-    if(!r) return '<hr style="border:none;border-top:1px solid #f0f2f5;margin:4px 0;">';
-    const color=r[2]==='accent2'?'#e8a020':`var(--${r[2]})`;
-    return `<div class="bat-row"><span class="bat-label">${r[0]}</span><span class="bat-val" style="color:${color}">${fmt(r[1])}</span></div>`;
-  }).join('');
+    const rows=[
+      ['(+) Total Bruto Folha',tB,'success'],
+      ['(–) Deduções (vales + compras + descontos)',tD,'danger'],
+      ['(=) Total Líquido a Pagar',tL,'primary'],
+      null,
+      ['(–) Parcelas Dia 20 pagas',p20,'accent2'],
+      ['(–) Parcelas Dia 5 pagas',p5,'accent2'],
+      ['(=) Saldo Ainda a Pagar',saldo,saldo>0.01?'danger':saldo<-0.01?'success':'primary'],
+      null,
+      ['(+) Impostos / FGTS / INSS',encImp,'danger'],
+      ['(+) Vale Transporte',encVT,'danger'],
+      ['(+) Vale Alimentação',encVA,'danger'],
+      ['(+) Outros Encargos',encOut,'danger'],
+      ['(=) Total Encargos',tEnc,'danger'],
+      null,
+      ['CUSTO TOTAL DA EMPRESA',custo,'primary'],
+    ];
 
-  const el=document.getElementById('batSaldo');
-  el.textContent=fmt(saldo);
-  el.style.color=saldo>0.01?'var(--danger)':saldo<-0.01?'var(--success)':'var(--primary)';
+    document.getElementById('batimentoContent').innerHTML=rows.map(r=>{
+      if(!r) return '<hr style="border:none;border-top:1px solid #f0f2f5;margin:4px 0;">';
+      const color=r[2]==='accent2'?'#e8a020':`var(--${r[2]})`;
+      return `<div class="bat-row"><span class="bat-label">${r[0]}</span><span class="bat-val" style="color:${color}">${fmt(r[1])}</span></div>`;
+    }).join('');
+
+    const el=document.getElementById('batSaldo');
+    el.textContent=fmt(saldo);
+    el.style.color=saldo>0.01?'var(--danger)':saldo<-0.01?'var(--success)':'var(--primary)';
+    setSyncStatus('ok', '✅ sincronizado');
+  } catch(e) {
+    document.getElementById('batimentoContent').innerHTML=`<div style="color:var(--danger)">Erro: ${e.message}</div>`;
+    setSyncStatus('err', '❌ erro');
+  }
 }
 
 // =============================================
 //  EXPORT
 // =============================================
-function exportData() {
-  const all={};
-  for(let k in localStorage){if(k.startsWith('fi_'))all[k]=JSON.parse(localStorage.getItem(k));}
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([JSON.stringify(all,null,2)],{type:'application/json'}));
-  a.download=`folha_grafica_${currentYear}_${String(currentMonth+1).padStart(2,'0')}.json`;
-  a.click();
+async function exportData() {
+  try {
+    const [funcs, sals, valesArr, comprasArr, descontosArr, comissoesArr, encs] = await Promise.all([
+      dbGet('funcionarios'),
+      dbGet('salarios'),
+      dbGet('vales'),
+      dbGet('compras'),
+      dbGet('descontos'),
+      dbGet('comissoes'),
+      dbGet('encargos'),
+    ]);
+    const all = { funcionarios:funcs, salarios:sals, vales:valesArr, compras:comprasArr, descontos:descontosArr, comissoes:comissoesArr, encargos:encs };
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(all,null,2)],{type:'application/json'}));
+    a.download=`folha_grafica_${currentYear}_${String(currentMonth+1).padStart(2,'0')}.json`;
+    a.click();
+  } catch(e) { alert('Erro ao exportar: ' + e.message); }
 }
 
 // =============================================
 //  INIT
 // =============================================
 buildMonthNav();
-refreshAll();
+// Load funcs then render
+getFuncs().then(() => {
+  setSyncStatus('ok', '✅ sincronizado');
+  refreshAll();
+}).catch(e => {
+  setSyncStatus('err', '❌ sem conexão');
+  console.error(e);
+  refreshAll();
+});
 </script>
 </body>
 </html>
