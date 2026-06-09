@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Folha de Pagamento — Gráfica Fábrica de Ideias</title>
+  <style>
+    :root {
+      --primary:    #0f3460;
+      --primary2:   #16213e;
+      --accent:     #e94560;
+      --accent2:    #f5a623;
+      --success:    #2ecc71;
+      --danger:     #e74c3c;
+      --bg:         #f0f2f5;
+      --card:       #ffffff;
+      --border:     #dde3ed;
+      --text:       #1a1f36;
+      --muted:      #8492a6;
+      --sidebar-bg: #16213e;
+      --sidebar-active: #0f3460;
+      --header-bg:  #0f3460;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+
+    /* SCROLLBAR */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #c5cfe0; border-radius: 4px; }
+
+    /* HEADER */
+    header {
+      background: var(--header-bg);
+      color: white;
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .header-logo {
+      width: 34px; height: 34px; border-radius: 8px;
+      background: var(--accent); display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .header-title { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+    .header-title small { display: block; font-size: 11px; opacity: 0.6; font-weight: 400; }
+    .header-actions { display: flex; gap: 8px; }
+
+    /* YEAR/MONTH AREA */
+    .top-bar {
+      background: var(--primary2);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .year-ctrl {
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 16px 0 0; border-right: 1px solid rgba(255,255,255,0.1);
+      margin-right: 0;
+    }
+    .year-ctrl button {
+      background: rgba(255,255,255,0.08); border: none; color: white;
+      width: 24px; height: 24px; border-radius: 4px; cursor: pointer; font-size: 12px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .year-ctrl button:hover { background: rgba(255,255,255,0.18); }
+    .year-ctrl strong { color: white; font-size: 14px; min-width: 38px; text-align: center; }
+    .month-nav { display: flex; flex: 1; overflow-x: auto; }
+    .month-tab {
+      padding: 10px 14px; cursor: pointer; border: none;
+      background: transparent; color: rgba(255,255,255,0.5);
+      font-size: 13px; border-bottom: 3px solid transparent; white-space: nowrap; transition: all 0.15s;
+    }
+    .month-tab:hover { color: rgba(255,255,255,0.85); }
+    .month-tab.active { color: var(--accent2); border-bottom-color: var(--accent2); font-weight: 700; }
+    .copy-btn {
+      margin-left: 12px; flex-shrink: 0;
+      background: rgba(245,166,35,0.15); border: 1px solid rgba(245,166,35,0.4);
+      color: var(--accent2); padding: 5px 12px; border-radius: 6px;
+      cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .copy-btn:hover { background: rgba(245,166,35,0.28); }
+
+    /* LAYOUT */
+    .main { display: flex; height: calc(100vh - 95px); }
+
+    /* SIDEBAR */
+    .sidebar {
+      width: 210px; flex-shrink: 0;
+      background: var(--sidebar-bg);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+    }
+    .sidebar-section {
+      padding: 16px 18px 6px;
+      font-size: 10px; text-transform: uppercase;
+      color: rgba(255,255,255,0.28); letter-spacing: 1px; font-weight: 600;
+    }
+    .sidebar-nav { list-style: none; padding-bottom: 16px; }
+    .sidebar-nav li a {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 18px;
+      color: rgba(255,255,255,0.55); font-size: 13px;
+      cursor: pointer; transition: all 0.15s; border-left: 3px solid transparent;
+    }
+    .sidebar-nav li a:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.9); }
+    .sidebar-nav li a.active {
+      background: rgba(15,52,96,0.8); color: white; font-weight: 600;
+      border-left-color: var(--accent);
+    }
+    .sidebar-nav li a .ico { width: 18px; text-align: center; font-size: 15px; }
+
+    /* CONTENT */
+    .content { flex: 1; overflow-y: auto; padding: 22px 26px; }
+
+    /* SECTION HEADER */
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+    .section-header h2 { font-size: 17px; font-weight: 700; color: var(--primary); }
+
+    /* TILES */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px,1fr)); gap: 12px; margin-bottom: 22px; }
+    .tile {
+      background: var(--card); border-radius: 10px; border: 1px solid var(--border);
+      padding: 16px; position: relative; overflow: hidden;
+    }
+    .tile::before {
+      content:''; position:absolute; top:0; left:0; right:0; height:3px;
+      background: var(--tile-color, var(--primary));
+    }
+    .tile-label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
+    .tile-value { font-size: 20px; font-weight: 700; margin-top: 5px; color: var(--tile-color, var(--primary)); }
+
+    /* CARDS */
+    .card { background: var(--card); border-radius: 10px; border: 1px solid var(--border); padding: 20px; margin-bottom: 16px; }
+    .card-title { font-size: 14px; font-weight: 700; color: var(--primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+    /* TABLES */
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f6f8fb; padding: 10px 12px; text-align: left; font-weight: 600; color: var(--muted); border-bottom: 2px solid var(--border); white-space: nowrap; }
+    td { padding: 9px 12px; border-bottom: 1px solid #f0f2f5; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fbfe; }
+    .total-row td { font-weight: 700; background: #eef2fb !important; border-top: 2px solid var(--border); }
+
+    /* BADGES */
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-green  { background: #d1f2e0; color: #0f6e39; }
+    .badge-red    { background: #fde0df; color: #9b1919; }
+    .badge-blue   { background: #dce8fb; color: #1a3c8a; }
+    .badge-orange { background: #fef0d3; color: #8a4a00; }
+    .badge-gray   { background: #eaecf0; color: #555; }
+    .badge-purple { background: #ede0fb; color: #5a1a8a; }
+
+    /* BUTTONS */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 7px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s; }
+    .btn:hover { filter: brightness(1.08); }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-accent  { background: var(--accent);  color: white; }
+    .btn-danger  { background: var(--danger);  color: white; }
+    .btn-outline { background: white; color: var(--primary); border: 1.5px solid var(--primary); }
+    .btn-ghost   { background: transparent; color: var(--muted); border: 1.5px solid var(--border); }
+    .btn-sm  { padding: 4px 11px; font-size: 12px; border-radius: 6px; }
+    .btn-icon{ padding: 5px 8px; }
+
+    /* FORMS */
+    .form-col  { display: flex; flex-direction: column; gap: 14px; }
+    .form-row  { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .form-group input, .form-group select {
+      padding: 8px 11px; border: 1.5px solid var(--border); border-radius: 7px;
+      font-size: 13px; outline: none; background: white; color: var(--text);
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(15,52,96,0.1); }
+    .form-full { width: 100%; }
+
+    /* MODAL */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(10,15,30,0.55);
+      z-index: 500; align-items: center; justify-content: center; backdrop-filter: blur(2px);
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: white; border-radius: 12px; padding: 28px;
+      min-width: 400px; max-width: 520px; width: 92%;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+      animation: pop .15s ease;
+    }
+    @keyframes pop { from { transform: scale(.95); opacity:0; } to { transform: scale(1); opacity:1; } }
+    .modal-title { font-size: 16px; font-weight: 700; color: var(--primary); margin-bottom: 20px; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+    /* FUNC BLOCKS (resumo) */
+    .func-block { background: var(--card); border-radius: 10px; border: 1px solid var(--border); margin-bottom: 14px; overflow: hidden; }
+    .func-block-header {
+      background: var(--primary); color: white;
+      padding: 13px 18px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none;
+    }
+    .func-block-header:hover { background: #174575; }
+    .func-fname { font-weight: 700; font-size: 14px; }
+    .func-fsub  { font-size: 12px; opacity: 0.7; margin-top: 2px; }
+    .func-header-right { text-align: right; flex-shrink: 0; margin-left: 12px; }
+    .func-saldo-label { font-size: 11px; opacity: 0.7; }
+    .func-saldo-val { font-size: 18px; font-weight: 800; }
+    .func-arrow { margin-left: 10px; font-size: 14px; transition: transform .2s; }
+    .func-arrow.open { transform: rotate(180deg); }
+    .func-block-body { display: none; }
+    .func-block-body.open { display: block; }
+
+    .sub-section { padding: 10px 18px; border-bottom: 1px solid #f0f2f5; }
+    .sub-section:last-child { border-bottom: none; }
+    .sub-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
+    .launch-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 13px; gap: 8px; }
+    .launch-desc { flex: 1; color: var(--text); }
+    .launch-date { font-size: 11px; color: var(--muted); margin-left: 6px; }
+    .launch-val { font-weight: 600; white-space: nowrap; }
+    .cr { color: var(--success); }
+    .db { color: var(--danger); }
+
+    .func-totals {
+      display: flex; flex-wrap: wrap; gap: 8px 20px;
+      padding: 10px 18px; background: #f8faff;
+      border-top: 1px solid var(--border);
+    }
+    .func-total-item { font-size: 12px; color: var(--muted); }
+    .func-total-item b { font-weight: 700; }
+
+    /* ENCARGOS GERAIS */
+    .enc-gerais { background: var(--card); border-radius: 10px; border: 1px solid var(--border); margin-bottom: 14px; overflow: hidden; }
+    .enc-gerais-header {
+      background: #7b341e; color: white; padding: 13px 18px;
+      font-weight: 700; font-size: 14px; cursor: pointer; user-select: none;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .enc-gerais-header:hover { background: #9b3d20; }
+
+    /* BATIMENTO */
+    .bat-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f2f5; }
+    .bat-row:last-child { border-bottom: none; }
+    .bat-label { color: var(--muted); }
+    .bat-val { font-weight: 700; }
+
+    /* DANGER ZONE */
+    .danger-zone { border: 2px solid var(--danger); border-radius: 10px; padding: 20px; background: #fff8f8; }
+    .danger-zone h3 { color: var(--danger); margin-bottom: 8px; }
+    .danger-zone p { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+
+    /* PAGE */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    @media print {
+      .sidebar,.top-bar,header .header-actions,.btn,.form-row { display: none !important; }
+      .main { display: block; } .content { padding: 0; }
+    }
+    @media(max-width:640px) { .sidebar{display:none;} .tiles{grid-template-columns:1fr 1fr;} }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="header-left">
+    <div class="header-logo">🖨</div>
+    <div class="header-title">
+      Folha de Pagamento
+      <small>Gráfica Fábrica de Ideias</small>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-ghost btn-sm" onclick="exportData()">⬇ Exportar</button>
+    <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Imprimir</button>
+  </div>
+</header>
+
+<!-- TOP BAR (ano + meses) -->
+<div class="top-bar">
+  <div class="year-ctrl">
+    <button onclick="changeYear(-1)">◀</button>
+    <strong id="yearLabel">2026</strong>
+    <button onclick="changeYear(1)">▶</button>
+  </div>
+  <div class="month-nav" id="monthNav"></div>
+  <button class="copy-btn" onclick="copiarSalariosProximoMes()">📋 Copiar salários → próx. mês</button>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <ul class="sidebar-nav">
+      <li><div class="sidebar-section">Visão Geral</div></li>
+      <li><a onclick="showPage('resumo')"       id="nav-resumo"       class="active"><span class="ico">📊</span> Resumo do Mês</a></li>
+      <li><a onclick="showPage('batimento')"    id="nav-batimento"           ><span class="ico">⚖️</span> Batimento</a></li>
+      <li><div class="sidebar-section">Lançamentos</div></li>
+      <li><a onclick="showPage('salarios')"     id="nav-salarios"            ><span class="ico">💰</span> Salários</a></li>
+      <li><a onclick="showPage('vales')"        id="nav-vales"               ><span class="ico">🎫</span> Vales</a></li>
+      <li><a onclick="showPage('compras')"      id="nav-compras"             ><span class="ico">🛒</span> Compras Gráfica</a></li>
+      <li><a onclick="showPage('descontos')"    id="nav-descontos"           ><span class="ico">✂️</span> Descontos</a></li>
+      <li><a onclick="showPage('comissoes')"    id="nav-comissoes"           ><span class="ico">📈</span> Comissões</a></li>
+      <li><div class="sidebar-section">Encargos</div></li>
+      <li><a onclick="showPage('encargos')"     id="nav-encargos"            ><span class="ico">🏛️</span> Impost. / VT / VA</a></li>
+      <li><div class="sidebar-section">Cadastros</div></li>
+      <li><a onclick="showPage('funcionarios')" id="nav-funcionarios"        ><span class="ico">👥</span> Funcionários</a></li>
+      <li><div class="sidebar-section">Sistema</div></li>
+      <li><a onclick="showPage('config')"       id="nav-config"              ><span class="ico">⚙️</span> Configurações</a></li>
+    </ul>
+  </aside>
+
+  <!-- CONTENT -->
+  <main class="content">
+
+    <!-- RESUMO -->
+    <div class="page active" id="page-resumo">
+      <div class="section-header">
+        <h2 id="resumoTitle">Resumo — Junho / 2026</h2>
+      </div>
+      <div class="tiles" id="tiles"></div>
+      <div id="resumoDetalhado"></div>
+    </div>
+
+    <!-- BATIMENTO -->
+    <div class="page" id="page-batimento">
+      <div class="section-header"><h2>⚖️ Batimento de Contas</h2></div>
+      <div class="card" style="max-width:580px;">
+        <div class="card-title">Resumo Financeiro — <span id="batMes"></span></div>
+        <div id="batimentoContent"></div>
+        <div style="margin-top:18px;padding-top:14px;border-top:2.5px solid var(--primary);display:flex;justify-content:space-between;align-items:center;">
+          <strong style="font-size:15px;">SALDO A PAGAR</strong>
+          <strong id="batSaldo" style="font-size:22px;"></strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- SALÁRIOS -->
+    <div class="page" id="page-salarios">
+      <div class="section-header">
+        <h2>💰 Salários e Pagamentos</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalSalario(null)">+ Lançar</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="salariosTable">
+            <thead><tr><th>Funcionário</th><th>Salário Base</th><th>Parcela Dia 20</th><th>Parcela Dia 5</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- VALES -->
+    <div class="page" id="page-vales">
+      <div class="section-header">
+        <h2>🎫 Vales</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalVale(null)">+ Novo Vale</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="valesTable">
+            <thead><tr><th>Data</th><th>Funcionário</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMPRAS -->
+    <div class="page" id="page-compras">
+      <div class="section-header">
+        <h2>🛒 Compras na Gráfica</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalCompra(null)">+ Nova Compra</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="comprasTable">
+            <thead><tr><th>Data</th><th>Funcionário</th><th>Produto/Serviço</th><th>Valor</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- DESCONTOS -->
+    <div class="page" id="page-descontos">
+      <div class="section-header">
+        <h2>✂️ Descontos</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalDesconto(null)">+ Novo Desconto</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="descontosTable">
+            <thead><tr><th>Data</th><th>Funcionário</th><th>Tipo</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMISSÕES -->
+    <div class="page" id="page-comissoes">
+      <div class="section-header">
+        <h2>📈 Comissões</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalComissao(null)">+ Nova Comissão</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="comissoesTable">
+            <thead><tr><th>Funcionário</th><th>Ref. Vendas</th><th>% Comissão</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ENCARGOS -->
+    <div class="page" id="page-encargos">
+      <div class="section-header">
+        <h2>🏛️ Impostos / Vale Transporte / Vale Alimentação</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalEncargo(null)">+ Novo Lançamento</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="encargosTable">
+            <thead><tr><th>Tipo</th><th>Funcionário / Geral</th><th>Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- FUNCIONÁRIOS -->
+    <div class="page" id="page-funcionarios">
+      <div class="section-header">
+        <h2>👥 Cadastro de Funcionários</h2>
+        <button class="btn btn-primary btn-sm" onclick="openModalFuncionario(null)">+ Novo Funcionário</button>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table id="funcTable">
+            <thead><tr><th>Nome</th><th>Cargo</th><th>Salário Atual</th><th>Comissão</th><th>Admissão</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIGURAÇÕES -->
+    <div class="page" id="page-config">
+      <div class="section-header"><h2>⚙️ Configurações do Sistema</h2></div>
+      <div class="danger-zone" style="max-width:500px;">
+        <h3>⚠️ Zerar todos os dados</h3>
+        <p>Remove todos os lançamentos, funcionários e configurações. Esta ação <strong>não pode ser desfeita</strong>. Faça um backup (botão Exportar) antes de continuar.</p>
+        <button class="btn btn-danger" onclick="zerarTudo()">🗑 Zerar tudo e começar do zero</button>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ===== MODALS ===== -->
+
+<!-- Funcionário -->
+<div class="modal-overlay" id="modalFuncionario">
+  <div class="modal">
+    <div class="modal-title" id="mFuncTitle">👥 Novo Funcionário</div>
+    <input type="hidden" id="fId">
+    <div class="form-col">
+      <div class="form-group"><label>Nome Completo</label><input id="fNome" placeholder="Nome completo" class="form-full"></div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1"><label>Cargo</label><input id="fCargo" placeholder="Ex: Designer"></div>
+        <div class="form-group"><label>Salário Base (R$)</label><input id="fSalario" type="number" step="0.01" min="0" style="width:130px"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Mês de admissão</label>
+          <select id="fMesInicio">
+            <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
+            <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
+            <option value="6">Julho</option><option value="7">Agosto</option><option value="8">Setembro</option>
+            <option value="9">Outubro</option><option value="10">Novembro</option><option value="11">Dezembro</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Ano de admissão</label><input id="fAnoInicio" type="number" min="2020" max="2040" style="width:100px"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Tem Comissão?</label>
+          <select id="fComissao" onchange="toggleComissao()">
+            <option value="nao">Não</option>
+            <option value="sim">Sim</option>
+          </select>
+        </div>
+        <div class="form-group" id="fPctGroup" style="display:none;">
+          <label>% Comissão</label>
+          <input id="fPct" type="number" step="0.1" min="0" max="100" style="width:100px">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalFuncionario')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarFuncionario()">Salvar Funcionário</button>
+    </div>
+  </div>
+</div>
+
+<!-- Salário -->
+<div class="modal-overlay" id="modalSalario">
+  <div class="modal">
+    <div class="modal-title">💰 Pagamento de Salário</div>
+    <div class="form-col">
+      <div class="form-group"><label>Funcionário</label><select id="sFuncionario" class="form-full" onchange="preencherSalario()"></select></div>
+      <div class="form-group"><label>Salário Base do Mês (R$)</label><input id="sSalario" type="number" step="0.01" readonly style="background:#f6f8fb;width:160px;"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Parcela Dia 20 (R$)</label><input id="sParcela20" type="number" step="0.01" min="0"></div>
+        <div class="form-group"><label>Parcela Dia 5 (R$)</label><input id="sParcela5" type="number" step="0.01" min="0"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalSalario')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarSalario()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Vale -->
+<div class="modal-overlay" id="modalVale">
+  <div class="modal">
+    <div class="modal-title">🎫 Registrar Vale</div>
+    <input type="hidden" id="vId">
+    <div class="form-col">
+      <div class="form-group"><label>Funcionário</label><select id="vFuncionario" class="form-full"></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Data</label><input id="vData" type="date"></div>
+        <div class="form-group"><label>Valor (R$)</label><input id="vValor" type="number" step="0.01" min="0" style="width:130px"></div>
+      </div>
+      <div class="form-group"><label>Observação</label><input id="vObs" placeholder="Opcional" class="form-full"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalVale')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarVale()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Compra -->
+<div class="modal-overlay" id="modalCompra">
+  <div class="modal">
+    <div class="modal-title">🛒 Compra na Gráfica</div>
+    <input type="hidden" id="cId">
+    <div class="form-col">
+      <div class="form-group"><label>Funcionário</label><select id="cFuncionario" class="form-full"></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Data</label><input id="cData" type="date"></div>
+        <div class="form-group"><label>Valor (R$)</label><input id="cValor" type="number" step="0.01" min="0" style="width:130px"></div>
+      </div>
+      <div class="form-group"><label>Produto / Serviço</label><input id="cProduto" placeholder="Descrição" class="form-full"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalCompra')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCompra()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Desconto -->
+<div class="modal-overlay" id="modalDesconto">
+  <div class="modal">
+    <div class="modal-title">✂️ Registrar Desconto</div>
+    <input type="hidden" id="dId">
+    <div class="form-col">
+      <div class="form-group"><label>Funcionário</label><select id="dFuncionario" class="form-full"></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Tipo</label>
+          <select id="dTipo">
+            <option value="Erro">Erro</option>
+            <option value="Falta">Falta</option>
+            <option value="Atraso">Atraso</option>
+            <option value="Outro">Outro</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Data</label><input id="dData" type="date"></div>
+        <div class="form-group"><label>Valor (R$)</label><input id="dValor" type="number" step="0.01" min="0" style="width:110px"></div>
+      </div>
+      <div class="form-group"><label>Observação</label><input id="dObs" placeholder="Opcional" class="form-full"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalDesconto')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarDesconto()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Comissão -->
+<div class="modal-overlay" id="modalComissao">
+  <div class="modal">
+    <div class="modal-title">📈 Registrar Comissão</div>
+    <input type="hidden" id="cmId">
+    <div class="form-col">
+      <div class="form-group"><label>Funcionário</label><select id="cmFuncionario" class="form-full" onchange="preencherPctComissao()"></select></div>
+      <div class="form-row">
+        <div class="form-group"><label>Total de Vendas (R$)</label><input id="cmVendas" type="number" step="0.01" min="0" oninput="calcComissao()"></div>
+        <div class="form-group"><label>% Comissão</label><input id="cmPct" type="number" step="0.1" min="0" style="width:100px" oninput="calcComissao()"></div>
+        <div class="form-group"><label>Valor Comissão (R$)</label><input id="cmValor" type="number" step="0.01" min="0" placeholder="Auto"></div>
+      </div>
+      <div class="form-group"><label>Observação</label><input id="cmObs" placeholder="Ex: ref. maio/2026" class="form-full"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalComissao')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarComissao()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Encargo -->
+<div class="modal-overlay" id="modalEncargo">
+  <div class="modal">
+    <div class="modal-title">🏛️ Lançar Encargo</div>
+    <input type="hidden" id="eId">
+    <div class="form-col">
+      <div class="form-row">
+        <div class="form-group"><label>Tipo</label>
+          <select id="eTipo">
+            <option value="Imposto">Imposto / FGTS / INSS</option>
+            <option value="Vale Transporte">Vale Transporte</option>
+            <option value="Vale Alimentação">Vale Alimentação</option>
+            <option value="Outro">Outro</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Valor (R$)</label><input id="eValor" type="number" step="0.01" min="0" style="width:130px"></div>
+      </div>
+      <div class="form-group"><label>Funcionário (deixe vazio se for geral)</label><select id="eFuncionario" class="form-full"><option value="">— Geral (empresa) —</option></select></div>
+      <div class="form-group"><label>Observação</label><input id="eObs" placeholder="Opcional" class="form-full"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalEncargo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEncargo()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// =============================================
+//  CORE
+// =============================================
+const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+               'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+let currentYear  = new Date().getFullYear();
+let currentMonth = new Date().getMonth();
+let currentPage  = 'resumo';
+
+const key  = s => `fi_${currentYear}_${currentMonth}_${s}`;
+const gKey = s => `fi_${s}`;
+const load  = s => JSON.parse(localStorage.getItem(key(s))  || '[]');
+const loadG = s => JSON.parse(localStorage.getItem(gKey(s)) || '[]');
+const save  = (s,d) => localStorage.setItem(key(s),  JSON.stringify(d));
+const saveG = (s,d) => localStorage.setItem(gKey(s), JSON.stringify(d));
+const uid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const fmt   = v => 'R$ ' + Number(v||0).toFixed(2).replace('.',',');
+const getNome = id => { const f=loadG('funcionarios').find(x=>x.id===id); return f?f.nome:'?'; };
+
+// Salário vigente do funcionário para o mês/ano atual
+function getSalarioVigente(f) {
+  if (!f.salarioHistorico || !f.salarioHistorico.length) return f.salario||0;
+  // filtra entradas <= mês atual e pega a mais recente
+  const validas = f.salarioHistorico.filter(h =>
+    h.year < currentYear || (h.year === currentYear && h.month <= currentMonth)
+  );
+  if (!validas.length) return 0; // admitido depois
+  validas.sort((a,b) => (b.year*12+b.month) - (a.year*12+a.month));
+  return validas[0].valor;
+}
+
+// Funcionários ativos no mês atual
+function funcDoMes() {
+  return loadG('funcionarios').filter(f => {
+    if (f.ativo === false) return false;
+    const sy = f.startYear || 0;
+    const sm = f.startMonth != null ? f.startMonth : 0;
+    return currentYear > sy || (currentYear === sy && currentMonth >= sm);
+  });
+}
+
+// =============================================
+//  NAV
+// =============================================
+function buildMonthNav() {
+  const nav = document.getElementById('monthNav');
+  nav.innerHTML = '';
+  MESES.forEach((m,i) => {
+    const btn = document.createElement('button');
+    btn.className = 'month-tab' + (i===currentMonth?' active':'');
+    btn.textContent = m.slice(0,3);
+    btn.onclick = () => { currentMonth=i; buildMonthNav(); refreshAll(); };
+    nav.appendChild(btn);
+  });
+  document.getElementById('yearLabel').textContent = currentYear;
+}
+function changeYear(d) { currentYear+=d; buildMonthNav(); refreshAll(); }
+function showPage(p) {
+  document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.sidebar-nav a').forEach(el=>el.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  document.getElementById('nav-'+p).classList.add('active');
+  currentPage=p; refreshPage(p);
+}
+function refreshAll() { refreshPage(currentPage); }
+function refreshPage(p) {
+  ({resumo:renderResumo, batimento:renderBatimento, salarios:renderSalarios,
+    vales:renderVales, compras:renderCompras, descontos:renderDescontos,
+    comissoes:renderComissoes, encargos:renderEncargos,
+    funcionarios:renderFuncionarios}[p] || (()=>{}))();
+}
+
+// =============================================
+//  COPIAR SALÁRIOS
+// =============================================
+function copiarSalariosProximoMes() {
+  let nm = currentMonth+1, ny = currentYear;
+  if(nm>11){nm=0;ny++;}
+  if(!confirm(`Copiar parcelas (dia 20 e dia 5) de ${MESES[currentMonth]}/${currentYear} → ${MESES[nm]}/${ny}?`)) return;
+  const src = load('salarios');
+  const destKey = `fi_${ny}_${nm}_salarios`;
+  const dest = JSON.parse(localStorage.getItem(destKey)||'[]');
+  src.forEach(s => {
+    const i = dest.findIndex(x=>x.funcId===s.funcId);
+    if(i>=0) dest[i]={...s}; else dest.push({...s});
+  });
+  localStorage.setItem(destKey, JSON.stringify(dest));
+  alert(`Salários copiados para ${MESES[nm]}/${ny}!`);
+}
+
+// =============================================
+//  ZERAR
+// =============================================
+function zerarTudo() {
+  if(!confirm('ATENÇÃO: Isso vai apagar TODOS os dados (funcionários, lançamentos, tudo). Tem certeza?')) return;
+  if(!confirm('Segunda confirmação: realmente quer apagar tudo?')) return;
+  const keys = Object.keys(localStorage).filter(k=>k.startsWith('fi_'));
+  keys.forEach(k=>localStorage.removeItem(k));
+  alert('Dados zerados! Você pode começar do zero.');
+  refreshAll();
+}
+
+// =============================================
+//  FUNCIONÁRIOS
+// =============================================
+function openModalFuncionario(f) {
+  document.getElementById('fId').value          = f ? f.id : '';
+  document.getElementById('mFuncTitle').textContent = f ? '✏️ Editar Funcionário' : '👥 Novo Funcionário';
+  document.getElementById('fNome').value         = f ? f.nome : '';
+  document.getElementById('fCargo').value        = f ? f.cargo : '';
+  document.getElementById('fSalario').value      = f ? getSalarioVigente(f) : '';
+  document.getElementById('fMesInicio').value    = f ? (f.startMonth??currentMonth) : currentMonth;
+  document.getElementById('fAnoInicio').value    = f ? (f.startYear??currentYear)   : currentYear;
+  document.getElementById('fComissao').value     = f ? f.temComissao : 'nao';
+  document.getElementById('fPct').value          = f ? f.pctComissao : '';
+  document.getElementById('fPctGroup').style.display = (f && f.temComissao==='sim') ? '' : 'none';
+  openModal('modalFuncionario');
+}
+function toggleComissao() {
+  document.getElementById('fPctGroup').style.display =
+    document.getElementById('fComissao').value==='sim' ? '' : 'none';
+}
+function salvarFuncionario() {
+  const id          = document.getElementById('fId').value;
+  const nome        = document.getElementById('fNome').value.trim();
+  const cargo       = document.getElementById('fCargo').value.trim();
+  const novoSalario = parseFloat(document.getElementById('fSalario').value)||0;
+  const startMonth  = parseInt(document.getElementById('fMesInicio').value);
+  const startYear   = parseInt(document.getElementById('fAnoInicio').value)||currentYear;
+  const temComissao = document.getElementById('fComissao').value;
+  const pctComissao = parseFloat(document.getElementById('fPct').value)||0;
+  if(!nome) return alert('Informe o nome.');
+
+  const funcs = loadG('funcionarios');
+  if(id) {
+    const idx = funcs.findIndex(x=>x.id===id);
+    if(idx<0) return;
+    const f = funcs[idx];
+    // Se salário mudou, adiciona ao histórico
+    const salAtual = getSalarioVigente(f);
+    if(novoSalario !== salAtual) {
+      if(!f.salarioHistorico) f.salarioHistorico=[];
+      f.salarioHistorico.push({valor:novoSalario, year:currentYear, month:currentMonth});
+    }
+    f.nome=nome; f.cargo=cargo; f.salario=novoSalario;
+    f.temComissao=temComissao; f.pctComissao=pctComissao;
+  } else {
+    funcs.push({
+      id: uid(), nome, cargo, salario: novoSalario,
+      startYear, startMonth,
+      salarioHistorico: [{valor:novoSalario, year:startYear, month:startMonth}],
+      temComissao, pctComissao, ativo: true
+    });
+  }
+  saveG('funcionarios', funcs);
+  closeModal('modalFuncionario');
+  renderFuncionarios();
+}
+function renderFuncionarios() {
+  const funcs = loadG('funcionarios');
+  const tbody = document.querySelector('#funcTable tbody');
+  tbody.innerHTML = '';
+  if(!funcs.length) {
+    tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px;">Nenhum funcionário cadastrado.</td></tr>';
+    return;
+  }
+  funcs.forEach(f => {
+    const sal = getSalarioVigente(f);
+    const adm = `${MESES[f.startMonth||0].slice(0,3)}/${f.startYear||'?'}`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${f.nome}</strong></td>
+      <td>${f.cargo||'—'}</td>
+      <td>${fmt(sal)}</td>
+      <td>${f.temComissao==='sim'?`<span class="badge badge-green">Sim — ${f.pctComissao}%</span>`:'<span class="badge badge-gray">Não</span>'}</td>
+      <td>${adm}</td>
+      <td><span class="badge ${f.ativo!==false?'badge-blue':'badge-gray'}">${f.ativo!==false?'Ativo':'Inativo'}</span></td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn-ghost btn-sm btn-icon" onclick='openModalFuncionario(${JSON.stringify(f).replace(/'/g,"&#39;")})' title="Editar">✏️</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="toggleAtivo('${f.id}')" title="${f.ativo!==false?'Desativar':'Ativar'}">${f.ativo!==false?'⏸':'▶'}</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="excluirFuncionario('${f.id}')" title="Excluir">🗑</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+function toggleAtivo(id) {
+  const funcs=loadG('funcionarios'), f=funcs.find(x=>x.id===id);
+  if(f){f.ativo=f.ativo===false; saveG('funcionarios',funcs); renderFuncionarios();}
+}
+function excluirFuncionario(id) {
+  if(!confirm('Excluir este funcionário?')) return;
+  saveG('funcionarios',loadG('funcionarios').filter(x=>x.id!==id));
+  renderFuncionarios();
+}
+
+// =============================================
+//  SALÁRIOS
+// =============================================
+function openModalSalario(funcId) {
+  populateFuncSelects();
+  if(funcId){ document.getElementById('sFuncionario').value=funcId; preencherSalario(); }
+  openModal('modalSalario');
+}
+function preencherSalario() {
+  const id=document.getElementById('sFuncionario').value;
+  const f=loadG('funcionarios').find(x=>x.id===id);
+  document.getElementById('sSalario').value = f ? getSalarioVigente(f) : '';
+  const s=load('salarios').find(x=>x.funcId===id)||{};
+  document.getElementById('sParcela20').value=s.parcela20||'';
+  document.getElementById('sParcela5').value=s.parcela5||'';
+}
+function salvarSalario() {
+  const funcId=document.getElementById('sFuncionario').value;
+  if(!funcId) return alert('Selecione um funcionário.');
+  const parcela20=parseFloat(document.getElementById('sParcela20').value)||0;
+  const parcela5 =parseFloat(document.getElementById('sParcela5').value)||0;
+  const arr=load('salarios');
+  const i=arr.findIndex(x=>x.funcId===funcId);
+  if(i>=0) arr[i]={funcId,parcela20,parcela5}; else arr.push({funcId,parcela20,parcela5});
+  save('salarios',arr); closeModal('modalSalario'); renderSalarios();
+}
+function renderSalarios() {
+  const funcs=funcDoMes(), sal=load('salarios');
+  const tbody=document.querySelector('#salariosTable tbody');
+  tbody.innerHTML='';
+  if(!funcs.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum funcionário neste mês.</td></tr>';return;}
+  funcs.forEach(f=>{
+    const s=sal.find(x=>x.funcId===f.id)||{};
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><strong>${f.nome}</strong></td><td>${fmt(getSalarioVigente(f))}</td><td>${fmt(s.parcela20)}</td><td>${fmt(s.parcela5)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openModalSalario('${f.id}')">✏️ Editar</button></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// =============================================
+//  VALES
+// =============================================
+function openModalVale(item) {
+  populateFuncSelects();
+  document.getElementById('vId').value        = item?item.id:'';
+  document.getElementById('vFuncionario').value=item?item.funcId:'';
+  document.getElementById('vData').value      = item?item.data:'';
+  document.getElementById('vValor').value     = item?item.valor:'';
+  document.getElementById('vObs').value       = item?item.obs:'';
+  openModal('modalVale');
+}
+function salvarVale() {
+  const id=document.getElementById('vId').value;
+  const funcId=document.getElementById('vFuncionario').value;
+  const data=document.getElementById('vData').value;
+  const valor=parseFloat(document.getElementById('vValor').value)||0;
+  const obs=document.getElementById('vObs').value;
+  if(!funcId||!data||!valor) return alert('Preencha funcionário, data e valor.');
+  const arr=load('vales');
+  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,data,valor,obs};}
+  else arr.push({id:uid(),funcId,data,valor,obs});
+  save('vales',arr); closeModal('modalVale'); renderVales();
+}
+function renderVales() {
+  const arr=load('vales'), tbody=document.querySelector('#valesTable tbody');
+  tbody.innerHTML='';
+  if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum vale lançado.</td></tr>';return;}
+  let tot=0;
+  arr.forEach(v=>{
+    tot+=v.valor;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${v.data}</td><td>${getNome(v.funcId)}</td><td>${fmt(v.valor)}</td><td>${v.obs||'—'}</td>
+      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalVale(${JSON.stringify(v).replace(/'/g,"&#39;")})'>✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="del('vales','${v.id}',renderVales)">🗑</button></td>`;
+    tbody.appendChild(tr);
+  });
+  totalRow(tbody,2,tot,5);
+}
+
+// =============================================
+//  COMPRAS
+// =============================================
+function openModalCompra(item) {
+  populateFuncSelects();
+  document.getElementById('cId').value        = item?item.id:'';
+  document.getElementById('cFuncionario').value=item?item.funcId:'';
+  document.getElementById('cData').value      = item?item.data:'';
+  document.getElementById('cValor').value     = item?item.valor:'';
+  document.getElementById('cProduto').value   = item?item.produto:'';
+  openModal('modalCompra');
+}
+function salvarCompra() {
+  const id=document.getElementById('cId').value;
+  const funcId=document.getElementById('cFuncionario').value;
+  const data=document.getElementById('cData').value;
+  const valor=parseFloat(document.getElementById('cValor').value)||0;
+  const produto=document.getElementById('cProduto').value;
+  if(!funcId||!data||!valor) return alert('Preencha funcionário, data e valor.');
+  const arr=load('compras');
+  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,data,valor,produto};}
+  else arr.push({id:uid(),funcId,data,valor,produto});
+  save('compras',arr); closeModal('modalCompra'); renderCompras();
+}
+function renderCompras() {
+  const arr=load('compras'), tbody=document.querySelector('#comprasTable tbody');
+  tbody.innerHTML='';
+  if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhuma compra lançada.</td></tr>';return;}
+  let tot=0;
+  arr.forEach(c=>{
+    tot+=c.valor;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${c.data}</td><td>${getNome(c.funcId)}</td><td>${c.produto||'—'}</td><td>${fmt(c.valor)}</td>
+      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalCompra(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="del('compras','${c.id}',renderCompras)">🗑</button></td>`;
+    tbody.appendChild(tr);
+  });
+  totalRow(tbody,3,tot,5);
+}
+
+// =============================================
+//  DESCONTOS
+// =============================================
+function openModalDesconto(item) {
+  populateFuncSelects();
+  document.getElementById('dId').value         = item?item.id:'';
+  document.getElementById('dFuncionario').value = item?item.funcId:'';
+  document.getElementById('dTipo').value        = item?item.tipo:'Erro';
+  document.getElementById('dData').value        = item?item.data:'';
+  document.getElementById('dValor').value       = item?item.valor:'';
+  document.getElementById('dObs').value         = item?item.obs:'';
+  openModal('modalDesconto');
+}
+function salvarDesconto() {
+  const id=document.getElementById('dId').value;
+  const funcId=document.getElementById('dFuncionario').value;
+  const tipo=document.getElementById('dTipo').value;
+  const data=document.getElementById('dData').value;
+  const valor=parseFloat(document.getElementById('dValor').value)||0;
+  const obs=document.getElementById('dObs').value;
+  if(!funcId||!data||!valor) return alert('Preencha funcionário, data e valor.');
+  const arr=load('descontos');
+  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,tipo,data,valor,obs};}
+  else arr.push({id:uid(),funcId,tipo,data,valor,obs});
+  save('descontos',arr); closeModal('modalDesconto'); renderDescontos();
+}
+function renderDescontos() {
+  const arr=load('descontos'), tbody=document.querySelector('#descontosTable tbody');
+  tbody.innerHTML='';
+  if(!arr.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Nenhum desconto lançado.</td></tr>';return;}
+  let tot=0;
+  arr.forEach(d=>{
+    tot+=d.valor;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${d.data}</td><td>${getNome(d.funcId)}</td><td><span class="badge badge-red">${d.tipo}</span></td><td>${fmt(d.valor)}</td><td>${d.obs||'—'}</td>
+      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalDesconto(${JSON.stringify(d).replace(/'/g,"&#39;")})'>✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="del('descontos','${d.id}',renderDescontos)">🗑</button></td>`;
+    tbody.appendChild(tr);
+  });
+  totalRow(tbody,3,tot,6);
+}
+
+// =============================================
+//  COMISSÕES
+// =============================================
+function openModalComissao(item) {
+  populateFuncSelects();
+  document.getElementById('cmId').value         = item?item.id:'';
+  document.getElementById('cmFuncionario').value = item?item.funcId:'';
+  document.getElementById('cmVendas').value      = item?item.vendas:'';
+  document.getElementById('cmPct').value         = item?item.pct:'';
+  document.getElementById('cmValor').value       = item?item.valor:'';
+  document.getElementById('cmObs').value         = item?item.obs:'';
+  openModal('modalComissao');
+}
+function preencherPctComissao() {
+  const id=document.getElementById('cmFuncionario').value;
+  const f=loadG('funcionarios').find(x=>x.id===id);
+  if(f&&f.temComissao==='sim') document.getElementById('cmPct').value=f.pctComissao;
+  calcComissao();
+}
+function calcComissao() {
+  const v=parseFloat(document.getElementById('cmVendas').value)||0;
+  const p=parseFloat(document.getElementById('cmPct').value)||0;
+  if(v&&p) document.getElementById('cmValor').value=(v*p/100).toFixed(2);
+}
+function salvarComissao() {
+  const id=document.getElementById('cmId').value;
+  const funcId=document.getElementById('cmFuncionario').value;
+  const vendas=parseFloat(document.getElementById('cmVendas').value)||0;
+  const pct=parseFloat(document.getElementById('cmPct').value)||0;
+  const valor=parseFloat(document.getElementById('cmValor').value)||0;
+  const obs=document.getElementById('cmObs').value;
+  if(!funcId||!valor) return alert('Preencha funcionário e valor.');
+  const arr=load('comissoes');
+  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,funcId,vendas,pct,valor,obs};}
+  else arr.push({id:uid(),funcId,vendas,pct,valor,obs});
+  save('comissoes',arr); closeModal('modalComissao'); renderComissoes();
+}
+function renderComissoes() {
+  const arr=load('comissoes'), tbody=document.querySelector('#comissoesTable tbody');
+  tbody.innerHTML='';
+  if(!arr.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Nenhuma comissão lançada.</td></tr>';return;}
+  let tot=0;
+  arr.forEach(c=>{
+    tot+=c.valor;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${getNome(c.funcId)}</td><td>${fmt(c.vendas)}</td><td>${c.pct||'—'}%</td><td>${fmt(c.valor)}</td><td>${c.obs||'—'}</td>
+      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalComissao(${JSON.stringify(c).replace(/'/g,"&#39;")})'>✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="del('comissoes','${c.id}',renderComissoes)">🗑</button></td>`;
+    tbody.appendChild(tr);
+  });
+  totalRow(tbody,3,tot,6);
+}
+
+// =============================================
+//  ENCARGOS
+// =============================================
+function openModalEncargo(item) {
+  populateFuncSelects();
+  document.getElementById('eId').value          = item?item.id:'';
+  document.getElementById('eTipo').value         = item?item.tipo:'Imposto';
+  document.getElementById('eValor').value        = item?item.valor:'';
+  document.getElementById('eFuncionario').value  = item?item.funcId:'';
+  document.getElementById('eObs').value          = item?item.obs:'';
+  openModal('modalEncargo');
+}
+function salvarEncargo() {
+  const id=document.getElementById('eId').value;
+  const tipo=document.getElementById('eTipo').value;
+  const valor=parseFloat(document.getElementById('eValor').value)||0;
+  const funcId=document.getElementById('eFuncionario').value;
+  const obs=document.getElementById('eObs').value;
+  if(!valor) return alert('Informe o valor.');
+  const arr=load('encargos');
+  if(id){const i=arr.findIndex(x=>x.id===id);if(i>=0)arr[i]={id,tipo,valor,funcId,obs};}
+  else arr.push({id:uid(),tipo,valor,funcId,obs});
+  save('encargos',arr); closeModal('modalEncargo'); renderEncargos();
+}
+function renderEncargos() {
+  const arr=load('encargos'), tbody=document.querySelector('#encargosTable tbody');
+  tbody.innerHTML='';
+  if(!arr.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">Nenhum encargo lançado.</td></tr>';return;}
+  let tot=0;
+  arr.forEach(e=>{
+    tot+=e.valor;
+    const cls=e.tipo==='Imposto'?'badge-red':e.tipo==='Vale Transporte'?'badge-blue':'badge-green';
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><span class="badge ${cls}">${e.tipo}</span></td><td>${e.funcId?getNome(e.funcId):'Geral'}</td><td>${fmt(e.valor)}</td><td>${e.obs||'—'}</td>
+      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-sm btn-icon" onclick='openModalEncargo(${JSON.stringify(e).replace(/'/g,"&#39;")})'>✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="del('encargos','${e.id}',renderEncargos)">🗑</button></td>`;
+    tbody.appendChild(tr);
+  });
+  totalRow(tbody,2,tot,5);
+}
+
+// =============================================
+//  HELPERS
+// =============================================
+function totalRow(tbody, vcol, total, cols) {
+  const tr=document.createElement('tr'); tr.className='total-row';
+  let h='';
+  for(let i=0;i<cols;i++) h+=`<td>${i===0?'TOTAL':i===vcol?fmt(total):''}</td>`;
+  tr.innerHTML=h; tbody.appendChild(tr);
+}
+function del(sec,id,cb) {
+  if(!confirm('Excluir este lançamento?')) return;
+  save(sec,load(sec).filter(x=>x.id!==id)); cb();
+}
+function populateFuncSelects() {
+  const funcs=funcDoMes();
+  ['sFuncionario','vFuncionario','cFuncionario','dFuncionario','cmFuncionario'].forEach(sid=>{
+    const sel=document.getElementById(sid); if(!sel) return;
+    const val=sel.value;
+    sel.innerHTML='<option value="">Selecione...</option>'+funcs.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
+    if(val) sel.value=val;
+  });
+  const ef=document.getElementById('eFuncionario');
+  if(ef){
+    const val=ef.value;
+    ef.innerHTML='<option value="">— Geral (empresa) —</option>'+funcs.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
+    if(val) ef.value=val;
+  }
+}
+function openModal(id)  { document.getElementById(id).classList.add('open');    }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(el=>{
+  el.addEventListener('click',e=>{ if(e.target===el) el.classList.remove('open'); });
+});
+
+// =============================================
+//  CÁLCULO POR FUNCIONÁRIO
+// =============================================
+function calcFunc(f) {
+  const sal    = getSalarioVigente(f);
+  const s      = load('salarios').find(x=>x.funcId===f.id)||{};
+  const vales    = load('vales').filter(x=>x.funcId===f.id);
+  const compras  = load('compras').filter(x=>x.funcId===f.id);
+  const descontos= load('descontos').filter(x=>x.funcId===f.id);
+  const comissoes= load('comissoes').filter(x=>x.funcId===f.id);
+  const tV=vales.reduce((a,b)=>a+b.valor,0);
+  const tC=compras.reduce((a,b)=>a+b.valor,0);
+  const tD=descontos.reduce((a,b)=>a+b.valor,0);
+  const tCom=comissoes.reduce((a,b)=>a+b.valor,0);
+  const bruto=sal+tCom;
+  const ded=tV+tC+tD;
+  const liq=bruto-ded;
+  const p20=s.parcela20||0, p5=s.parcela5||0;
+  return {sal,tV,tC,tD,tCom,bruto,ded,liq,p20,p5,vales,compras,descontos,comissoes};
+}
+
+// =============================================
+//  RESUMO
+// =============================================
+function renderResumo() {
+  const funcs=funcDoMes();
+  document.getElementById('resumoTitle').textContent=`Resumo — ${MESES[currentMonth]} / ${currentYear}`;
+
+  let tBruto=0,tDed=0,tLiq=0,tPago=0;
+  funcs.forEach(f=>{const c=calcFunc(f);tBruto+=c.bruto;tDed+=c.ded;tLiq+=c.liq;tPago+=c.p20+c.p5;});
+  const encargos=load('encargos');
+  const tEnc=encargos.reduce((a,b)=>a+b.valor,0);
+
+  document.getElementById('tiles').innerHTML=`
+    <div class="tile" style="--tile-color:var(--primary)"><div class="tile-label">Total Bruto</div><div class="tile-value">${fmt(tBruto)}</div></div>
+    <div class="tile" style="--tile-color:var(--danger)"><div class="tile-label">Total Deduções</div><div class="tile-value">${fmt(tDed)}</div></div>
+    <div class="tile" style="--tile-color:var(--success)"><div class="tile-label">Total Líquido</div><div class="tile-value">${fmt(tLiq)}</div></div>
+    <div class="tile" style="--tile-color:#e8a020"><div class="tile-label">Total Pago</div><div class="tile-value">${fmt(tPago)}</div></div>
+    <div class="tile" style="--tile-color:var(--danger)"><div class="tile-label">Encargos</div><div class="tile-value">${fmt(tEnc)}</div></div>
+    <div class="tile" style="--tile-color:var(--primary)"><div class="tile-label">Custo Total</div><div class="tile-value">${fmt(tBruto+tEnc)}</div></div>
+  `;
+
+  const div=document.getElementById('resumoDetalhado');
+  div.innerHTML='';
+
+  if(!funcs.length){
+    div.innerHTML=`<div class="card" style="text-align:center;color:var(--muted);padding:32px;">
+      Nenhum funcionário ativo neste mês.<br><br>
+      <button class="btn btn-primary btn-sm" onclick="showPage('funcionarios')">👥 Cadastrar Funcionários</button>
+    </div>`;
+    return;
+  }
+
+  funcs.forEach(f=>{
+    const c=calcFunc(f);
+    const saldo=c.liq-(c.p20+c.p5);
+    const saldoColor=saldo>0.01?'#e74c3c':saldo<-0.01?'#2ecc71':'#aaa';
+
+    let body='';
+
+    // Salário base
+    body+=`<div class="sub-section">
+      <div class="sub-label">Salário Base</div>
+      <div class="launch-row"><span class="launch-desc">Salário contratual</span><span class="launch-val cr">${fmt(c.sal)}</span></div>
+    </div>`;
+
+    // Comissões
+    if(c.comissoes.length){
+      body+=`<div class="sub-section"><div class="sub-label">Comissões</div>`;
+      c.comissoes.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.obs||'Comissão'}</span><span class="launch-val cr">${fmt(x.valor)}</span></div>`; });
+      body+=`</div>`;
+    }
+
+    // Vales
+    if(c.vales.length){
+      body+=`<div class="sub-section"><div class="sub-label">Vales Descontados</div>`;
+      c.vales.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">Vale${x.obs?' — '+x.obs:''}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
+      body+=`</div>`;
+    }
+
+    // Compras
+    if(c.compras.length){
+      body+=`<div class="sub-section"><div class="sub-label">Compras na Gráfica</div>`;
+      c.compras.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.produto||'Compra'}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
+      body+=`</div>`;
+    }
+
+    // Descontos
+    if(c.descontos.length){
+      body+=`<div class="sub-section"><div class="sub-label">Descontos (Erros / Faltas)</div>`;
+      c.descontos.forEach(x=>{ body+=`<div class="launch-row"><span class="launch-desc">${x.tipo}${x.obs?' — '+x.obs:''}<span class="launch-date">${x.data}</span></span><span class="launch-val db">– ${fmt(x.valor)}</span></div>`; });
+      body+=`</div>`;
+    }
+
+    // Pagamentos
+    body+=`<div class="sub-section"><div class="sub-label">Pagamentos Realizados</div>
+      <div class="launch-row"><span class="launch-desc">Parcela Dia 20</span><span class="launch-val db">– ${fmt(c.p20)}</span></div>
+      <div class="launch-row"><span class="launch-desc">Parcela Dia 5</span><span class="launch-val db">– ${fmt(c.p5)}</span></div>
+    </div>`;
+
+    // Encargos deste funcionário
+    const encF=encargos.filter(e=>e.funcId===f.id);
+    if(encF.length){
+      body+=`<div class="sub-section"><div class="sub-label">Encargos Vinculados</div>`;
+      encF.forEach(e=>{ body+=`<div class="launch-row"><span class="launch-desc">${e.tipo}${e.obs?' — '+e.obs:''}</span><span class="launch-val db">– ${fmt(e.valor)}</span></div>`; });
+      body+=`</div>`;
+    }
+
+    const blockId='block_'+f.id;
+    const block=document.createElement('div');
+    block.className='func-block';
+    block.innerHTML=`
+      <div class="func-block-header" onclick="toggleBlock('${blockId}')">
+        <div>
+          <div class="func-fname">${f.nome}</div>
+          <div class="func-fsub">${f.cargo||'—'} &nbsp;·&nbsp; Base: ${fmt(c.sal)} &nbsp;·&nbsp; Bruto: ${fmt(c.bruto)} &nbsp;·&nbsp; Líquido: ${fmt(c.liq)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="func-header-right">
+            <div class="func-saldo-label">Saldo a pagar</div>
+            <div class="func-saldo-val" style="color:${saldoColor}">${fmt(saldo)}</div>
+          </div>
+          <div class="func-arrow" id="arrow_${blockId}">▼</div>
+        </div>
+      </div>
+      <div class="func-block-body" id="${blockId}">
+        ${body}
+        <div class="func-totals">
+          <div class="func-total-item">Bruto: <b style="color:var(--primary)">${fmt(c.bruto)}</b></div>
+          <div class="func-total-item">Deduções: <b style="color:var(--danger)">– ${fmt(c.ded)}</b></div>
+          <div class="func-total-item">Líquido: <b style="color:var(--success)">${fmt(c.liq)}</b></div>
+          <div class="func-total-item">Pago (20+5): <b style="color:#e8a020">– ${fmt(c.p20+c.p5)}</b></div>
+          <div class="func-total-item">Saldo: <b style="color:${saldoColor}">${fmt(saldo)}</b></div>
+        </div>
+      </div>`;
+    div.appendChild(block);
+  });
+
+  // Encargos gerais
+  const encGerais=encargos.filter(e=>!e.funcId);
+  if(encGerais.length){
+    const tG=encGerais.reduce((a,b)=>a+b.valor,0);
+    let rows=encGerais.map(e=>`
+      <div class="launch-row" style="padding:9px 18px;border-bottom:1px solid #f0f2f5;">
+        <span class="launch-desc"><span class="badge ${e.tipo==='Imposto'?'badge-red':e.tipo==='Vale Transporte'?'badge-blue':'badge-green'}">${e.tipo}</span> ${e.obs||''}</span>
+        <span class="launch-val db">– ${fmt(e.valor)}</span>
+      </div>`).join('');
+    const egId='block_gerais';
+    const bl=document.createElement('div');
+    bl.className='enc-gerais';
+    bl.innerHTML=`
+      <div class="enc-gerais-header" onclick="toggleBlock('${egId}')">
+        <span>🏛️ Encargos Gerais da Empresa — Total: ${fmt(tG)}</span>
+        <span class="func-arrow" id="arrow_${egId}">▼</span>
+      </div>
+      <div class="func-block-body" id="${egId}">${rows}</div>`;
+    div.appendChild(bl);
+  }
+}
+
+function toggleBlock(id) {
+  const body=document.getElementById(id);
+  const arrow=document.getElementById('arrow_'+id);
+  const open=body.classList.toggle('open');
+  if(arrow){ arrow.textContent=open?'▲':'▼'; arrow.classList.toggle('open',open); }
+}
+
+// =============================================
+//  BATIMENTO
+// =============================================
+function renderBatimento() {
+  document.getElementById('batMes').textContent=`${MESES[currentMonth]} / ${currentYear}`;
+  const funcs=funcDoMes(), enc=load('encargos');
+  let tB=0,tD=0,tL=0,p20=0,p5=0;
+  funcs.forEach(f=>{const c=calcFunc(f);tB+=c.bruto;tD+=c.ded;tL+=c.liq;p20+=c.p20;p5+=c.p5;});
+  const tEnc=enc.reduce((a,b)=>a+b.valor,0);
+  const encVT=enc.filter(e=>e.tipo==='Vale Transporte').reduce((a,b)=>a+b.valor,0);
+  const encVA=enc.filter(e=>e.tipo==='Vale Alimentação').reduce((a,b)=>a+b.valor,0);
+  const encImp=enc.filter(e=>e.tipo==='Imposto').reduce((a,b)=>a+b.valor,0);
+  const encOut=enc.filter(e=>e.tipo==='Outro').reduce((a,b)=>a+b.valor,0);
+  const saldo=tL-(p20+p5);
+  const custo=tB+tEnc;
+
+  const rows=[
+    ['(+) Total Bruto Folha',tB,'success'],
+    ['(–) Deduções (vales + compras + descontos)',tD,'danger'],
+    ['(=) Total Líquido a Pagar',tL,'primary'],
+    null,
+    ['(–) Parcelas Dia 20 pagas',p20,'accent2'],
+    ['(–) Parcelas Dia 5 pagas',p5,'accent2'],
+    ['(=) Saldo Ainda a Pagar',saldo,saldo>0.01?'danger':saldo<-0.01?'success':'primary'],
+    null,
+    ['(+) Impostos / FGTS / INSS',encImp,'danger'],
+    ['(+) Vale Transporte',encVT,'danger'],
+    ['(+) Vale Alimentação',encVA,'danger'],
+    ['(+) Outros Encargos',encOut,'danger'],
+    ['(=) Total Encargos',tEnc,'danger'],
+    null,
+    ['CUSTO TOTAL DA EMPRESA',custo,'primary'],
+  ];
+
+  document.getElementById('batimentoContent').innerHTML=rows.map(r=>{
+    if(!r) return '<hr style="border:none;border-top:1px solid #f0f2f5;margin:4px 0;">';
+    const color=r[2]==='accent2'?'#e8a020':`var(--${r[2]})`;
+    return `<div class="bat-row"><span class="bat-label">${r[0]}</span><span class="bat-val" style="color:${color}">${fmt(r[1])}</span></div>`;
+  }).join('');
+
+  const el=document.getElementById('batSaldo');
+  el.textContent=fmt(saldo);
+  el.style.color=saldo>0.01?'var(--danger)':saldo<-0.01?'var(--success)':'var(--primary)';
+}
+
+// =============================================
+//  EXPORT
+// =============================================
+function exportData() {
+  const all={};
+  for(let k in localStorage){if(k.startsWith('fi_'))all[k]=JSON.parse(localStorage.getItem(k));}
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(all,null,2)],{type:'application/json'}));
+  a.download=`folha_grafica_${currentYear}_${String(currentMonth+1).padStart(2,'0')}.json`;
+  a.click();
+}
+
+// =============================================
+//  INIT
+// =============================================
+buildMonthNav();
+refreshAll();
+</script>
+</body>
+</html>
